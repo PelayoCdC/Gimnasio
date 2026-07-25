@@ -76,6 +76,11 @@ kotlin {
         androidUnitTest.dependencies {
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.koin.test)
+            // Los tests de interfaz corren en la JVM con Robolectric, porque en
+            // este equipo no hay emulador ni dispositivo conectado.
+            implementation(libs.robolectric)
+            implementation(libs.junit)
+            implementation(libs.compose.ui.test.junit4)
         }
     }
 }
@@ -112,4 +117,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    testOptions {
+        unitTests {
+            // Robolectric necesita los recursos de Android para inflar la UI.
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+dependencies {
+    // Aporta la ComponentActivity vacía que los tests de Compose necesitan.
+    // Tiene que ir en la configuración debug para que su manifiesto se fusione
+    // con el de la app; en el sourceSet de tests no serviría.
+    debugImplementation(libs.compose.ui.test.manifest)
 }

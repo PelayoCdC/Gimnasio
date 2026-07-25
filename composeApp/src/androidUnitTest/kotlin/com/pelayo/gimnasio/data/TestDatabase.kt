@@ -9,6 +9,10 @@ import com.pelayo.gimnasio.db.GimnasioDb
  * Sirve para validar que las consultas .sq se ejecutan de verdad contra SQLite.
  */
 fun createTestDatabase(): GimnasioDb {
+    // Bajo el classloader de Robolectric el driver no se autorregistra vía
+    // ServiceLoader y DriverManager falla con "No suitable driver found".
+    runCatching { Class.forName("org.sqlite.JDBC") }
+
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     GimnasioDb.Schema.create(driver)
     // Igual que en producción: sin este pragma SQLite ignora ON DELETE CASCADE.

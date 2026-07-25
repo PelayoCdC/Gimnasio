@@ -60,6 +60,20 @@ de Android (`AndroidSqliteDriver.Callback.onOpen`), en el de iOS
 driver JDBC en memoria), no contra mocks. Es lo que ha destapado los dos fallos de
 arriba. Si tocas el esquema o una query, esos tests son la red de seguridad.
 
+**Los tests de interfaz corren en la JVM con Robolectric**, no en un emulador.
+Tres cosas que hay que respetar al añadir uno:
+
+- `@Config(application = android.app.Application::class)`, o Robolectric arranca
+  `GimnasioApp`, que inicia Koin, y el segundo test peta con "already started".
+- `ui-test-manifest` va en `debugImplementation`, no en el sourceSet de tests:
+  aporta la `ComponentActivity` vacía y su manifiesto tiene que fusionarse.
+- Usa `assertExists()` en vez de `assertIsDisplayed()` para lo que pueda caer por
+  debajo del alto de la ventana de test; si no, fallan cosas que sí se renderizan.
+
+Para probar una pantalla con su ViewModel hay que llamar a
+`Dispatchers.setMain(Dispatchers.Unconfined)`, porque `viewModelScope` despacha en
+Main. `ActiveWorkoutScreenTest` es el ejemplo a copiar.
+
 **Cambiar el esquema exige una migración, y `SchemaMigrationTest` lo obliga.**
 Hay una instantánea del esquema en `androidUnitTest/resources/schema-snapshot.sql`
 y el test falla si los `.sq` dejan de cuadrar con ella. Para un cambio

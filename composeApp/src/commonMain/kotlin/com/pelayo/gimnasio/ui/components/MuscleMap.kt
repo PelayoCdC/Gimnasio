@@ -63,7 +63,7 @@ fun MuscleMap(
                     drawBody(front = true, outline = outline, colorFor = ::colorFor)
                 }
                 Text(
-                    "Frente",
+                    "Delante",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -72,8 +72,10 @@ fun MuscleMap(
                 Canvas(Modifier.fillMaxWidth().aspectRatio(0.5f)) {
                     drawBody(front = false, outline = outline, colorFor = ::colorFor)
                 }
+                // "Detrás" y no "Espalda": esta última es además un grupo
+                // muscular de la leyenda y se confundían.
                 Text(
-                    "Espalda",
+                    "Detrás",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
