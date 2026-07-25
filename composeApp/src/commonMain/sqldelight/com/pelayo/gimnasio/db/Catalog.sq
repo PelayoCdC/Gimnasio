@@ -1,0 +1,166 @@
+-- Catálogo de ejercicios: grupos musculares, músculos (wger), equipamiento y ejercicios.
+
+CREATE TABLE MuscleGroup (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL -- 'PUSH' | 'PULL' | 'LEGS' | 'CORE'
+);
+
+CREATE TABLE Muscle (
+    id INTEGER PRIMARY KEY, -- id de wger tal cual
+    nameEs TEXT NOT NULL,
+    nameEn TEXT,
+    isFront INTEGER NOT NULL DEFAULT 1,
+    muscleGroupId INTEGER NOT NULL REFERENCES MuscleGroup(id)
+);
+
+CREATE TABLE Equipment (
+    id INTEGER PRIMARY KEY, -- id de wger tal cual
+    nameEs TEXT NOT NULL
+);
+
+CREATE TABLE Exercise (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wgerId INTEGER UNIQUE, -- NULL si es ejercicio creado por el usuario
+    nameEs TEXT NOT NULL,
+    nameEn TEXT,
+    descriptionEs TEXT,
+    categoryId INTEGER,
+    videoUrl TEXT,
+    metValue REAL NOT NULL DEFAULT 3.5,
+    exerciseType TEXT NOT NULL DEFAULT 'REPS', -- 'REPS' | 'TIME'
+    isCustom INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE ExerciseMuscle (
+    exerciseId INTEGER NOT NULL REFERENCES Exercise(id) ON DELETE CASCADE,
+    muscleId INTEGER NOT NULL REFERENCES Muscle(id),
+    role TEXT NOT NULL, -- 'PRIMARY' | 'SECONDARY'
+    PRIMARY KEY (exerciseId, muscleId)
+);
+
+CREATE TABLE ExerciseEquipment (
+    exerciseId INTEGER NOT NULL REFERENCES Exercise(id) ON DELETE CASCADE,
+    equipmentId INTEGER NOT NULL REFERENCES Equipment(id),
+    PRIMARY KEY (exerciseId, equipmentId)
+);
+
+CREATE TABLE ExerciseImage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exerciseId INTEGER NOT NULL REFERENCES Exercise(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    isMain INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_exercise_name ON Exercise(nameEs);
+CREATE INDEX idx_exercise_muscle_muscle ON ExerciseMuscle(muscleId);
+CREATE INDEX idx_exercise_image_exercise ON ExerciseImage(exerciseId);
+
+insertMuscleGroup:
+INSERT OR REPLACE INTO MuscleGroup(id, name, category) VALUES (?, ?, ?);
+
+insertMuscle:
+INSERT OR REPLACE INTO Muscle(id, nameEs, nameEn, isFront, muscleGroupId) VALUES (?, ?, ?, ?, ?);
+
+insertEquipment:
+INSERT OR REPLACE INTO Equipment(id, nameEs) VALUES (?, ?);
+
+countMuscleGroups:
+SELECT COUNT(*) FROM MuscleGroup;
+
+selectAllMuscleGroups:
+SELECT * FROM MuscleGroup ORDER BY id;
+
+selectAllMuscles:
+SELECT * FROM Muscle ORDER BY id;
+
+selectAllEquipment:
+SELECT * FROM Equipment ORDER BY nameEs;
+
+upsertExerciseByWgerId {
+    UPDATE Exercise
+    SET nameEs = :nameEs, nameEn = :nameEn, descriptionEs = :descriptionEs,
+        categoryId = :categoryId, videoUrl = :videoUrl, metValue = :metValue,
+        exerciseType = :exerciseType
+    WHERE wgerId = :wgerId;
+
+    INSERT OR IGNORE INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom)
+    VALUES (:wgerId, :nameEs, :nameEn, :descriptionEs, :categoryId, :videoUrl, :metValue, :exerciseType, 0);
+}
+
+insertCustomExercise:
+INSERT INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom)
+VALUES (NULL, ?, NULL, ?, NULL, NULL, ?, ?, 1);
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+selectExerciseIdByWgerId:
+SELECT id FROM Exercise WHERE wgerId = ?;
+
+deleteExerciseMuscles:
+DELETE FROM ExerciseMuscle WHERE exerciseId = ?;
+
+insertExerciseMuscle:
+INSERT OR REPLACE INTO ExerciseMuscle(exerciseId, muscleId, role) VALUES (?, ?, ?);
+
+deleteExerciseEquipment:
+DELETE FROM ExerciseEquipment WHERE exerciseId = ?;
+
+insertExerciseEquipment:
+INSERT OR REPLACE INTO ExerciseEquipment(exerciseId, equipmentId) VALUES (?, ?);
+
+deleteExerciseImages:
+DELETE FROM ExerciseImage WHERE exerciseId = ?;
+
+insertExerciseImage:
+INSERT INTO ExerciseImage(exerciseId, url, isMain) VALUES (?, ?, ?);
+
+countExercises:
+SELECT COUNT(*) FROM Exercise;
+
+-- La imagen se trae con LEFT JOIN (y no con subconsulta escalar) para que
+-- SQLDelight la infiera como nullable: hay ejercicios sin imagen.
+searchExercises:
+SELECT DISTINCT e.*, img.url AS mainImageUrl
+FROM Exercise e
+LEFT JOIN ExerciseMuscle em ON em.exerciseId = e.id
+LEFT JOIN Muscle m ON m.id = em.muscleId
+LEFT JOIN ExerciseEquipment ee ON ee.exerciseId = e.id
+LEFT JOIN ExerciseImage img ON img.id = (
+    SELECT i.id FROM ExerciseImage i WHERE i.exerciseId = e.id ORDER BY i.isMain DESC, i.id LIMIT 1
+)
+WHERE (:query = '' OR e.nameEs LIKE '%' || :query || '%' OR e.nameEn LIKE '%' || :query || '%')
+  AND (:muscleGroupId IS NULL OR (m.muscleGroupId = :muscleGroupId AND em.role = 'PRIMARY'))
+  AND (:equipmentId IS NULL OR ee.equipmentId = :equipmentId)
+ORDER BY e.nameEs
+LIMIT :limit OFFSET :offset;
+
+selectExerciseById:
+SELECT * FROM Exercise WHERE id = ?;
+
+selectImagesForExercise:
+SELECT * FROM ExerciseImage WHERE exerciseId = ? ORDER BY isMain DESC, id;
+
+selectMusclesForExercise:
+SELECT m.*, em.role
+FROM ExerciseMuscle em
+JOIN Muscle m ON m.id = em.muscleId
+WHERE em.exerciseId = ?;
+
+-- Todos los ejercicios con el grupo muscular y equipo de cada uno; alimenta al
+-- generador de rutinas, que necesita el catálogo entero de una vez.
+selectExerciseGroups:
+SELECT e.id, e.nameEs, m.muscleGroupId, em.role
+FROM Exercise e
+JOIN ExerciseMuscle em ON em.exerciseId = e.id
+JOIN Muscle m ON m.id = em.muscleId;
+
+selectAllExerciseEquipment:
+SELECT exerciseId, equipmentId FROM ExerciseEquipment;
+
+selectEquipmentForExercise:
+SELECT eq.*
+FROM ExerciseEquipment ee
+JOIN Equipment eq ON eq.id = ee.equipmentId
+WHERE ee.exerciseId = ?;

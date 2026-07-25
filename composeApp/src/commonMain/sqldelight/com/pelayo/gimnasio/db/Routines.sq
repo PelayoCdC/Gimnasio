@@ -1,0 +1,113 @@
+-- Rutinas (tablas de ejercicios) del usuario.
+
+CREATE TABLE Routine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    goal TEXT NOT NULL DEFAULT 'HIPERTROFIA', -- 'FUERZA'|'HIPERTROFIA'|'RESISTENCIA'|'PERDIDA_GRASA'
+    createdAt TEXT NOT NULL,
+    isActive INTEGER NOT NULL DEFAULT 0,
+    isGenerated INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE RoutineDay (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    routineId INTEGER NOT NULL REFERENCES Routine(id) ON DELETE CASCADE,
+    dayIndex INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    weekday INTEGER -- 1..7 ISO, NULL = flexible
+);
+
+CREATE TABLE RoutineExercise (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    routineDayId INTEGER NOT NULL REFERENCES RoutineDay(id) ON DELETE CASCADE,
+    exerciseId INTEGER NOT NULL REFERENCES Exercise(id),
+    position INTEGER NOT NULL,
+    targetSets INTEGER NOT NULL DEFAULT 3,
+    targetRepsMin INTEGER,
+    targetRepsMax INTEGER,
+    targetTimeSeconds INTEGER,
+    targetWeight REAL,
+    restSeconds INTEGER NOT NULL DEFAULT 90,
+    notes TEXT
+);
+
+CREATE INDEX idx_routine_day_routine ON RoutineDay(routineId);
+CREATE INDEX idx_routine_exercise_day ON RoutineExercise(routineDayId);
+
+insertRoutine:
+INSERT INTO Routine(name, description, goal, createdAt, isActive, isGenerated) VALUES (?, ?, ?, ?, ?, ?);
+
+updateRoutine:
+UPDATE Routine SET name = ?, description = ?, goal = ? WHERE id = ?;
+
+deleteRoutine:
+DELETE FROM Routine WHERE id = ?;
+
+setActiveRoutine {
+    UPDATE Routine SET isActive = 0;
+    UPDATE Routine SET isActive = 1 WHERE id = ?;
+}
+
+selectAllRoutines:
+SELECT * FROM Routine ORDER BY isActive DESC, createdAt DESC;
+
+selectRoutineById:
+SELECT * FROM Routine WHERE id = ?;
+
+selectActiveRoutine:
+SELECT * FROM Routine WHERE isActive = 1 LIMIT 1;
+
+insertRoutineDay:
+INSERT INTO RoutineDay(routineId, dayIndex, name, weekday) VALUES (?, ?, ?, ?);
+
+updateRoutineDay:
+UPDATE RoutineDay SET name = ?, weekday = ?, dayIndex = ? WHERE id = ?;
+
+deleteRoutineDay:
+DELETE FROM RoutineDay WHERE id = ?;
+
+selectDaysForRoutine:
+SELECT * FROM RoutineDay WHERE routineId = ? ORDER BY dayIndex;
+
+selectRoutineDayById:
+SELECT * FROM RoutineDay WHERE id = ?;
+
+insertRoutineExercise:
+INSERT INTO RoutineExercise(routineDayId, exerciseId, position, targetSets, targetRepsMin, targetRepsMax, targetTimeSeconds, targetWeight, restSeconds, notes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateRoutineExercise:
+UPDATE RoutineExercise
+SET targetSets = ?, targetRepsMin = ?, targetRepsMax = ?, targetTimeSeconds = ?, targetWeight = ?, restSeconds = ?, notes = ?, position = ?
+WHERE id = ?;
+
+deleteRoutineExercise:
+DELETE FROM RoutineExercise WHERE id = ?;
+
+updateRoutineExercisePosition:
+UPDATE RoutineExercise SET position = ? WHERE id = ?;
+
+selectRoutineDayIdForExercise:
+SELECT routineDayId FROM RoutineExercise WHERE id = ?;
+
+-- La imagen se trae con LEFT JOIN (y no con subconsulta escalar) para que
+-- SQLDelight la infiera como nullable: hay ejercicios sin imagen.
+selectExercisesForDay:
+SELECT re.*, e.nameEs, e.exerciseType, e.metValue, img.url AS mainImageUrl
+FROM RoutineExercise re
+JOIN Exercise e ON e.id = re.exerciseId
+LEFT JOIN ExerciseImage img ON img.id = (
+    SELECT i.id FROM ExerciseImage i WHERE i.exerciseId = e.id ORDER BY i.isMain DESC, i.id LIMIT 1
+)
+WHERE re.routineDayId = ?
+ORDER BY re.position;
+
+-- Para el análisis de balance: todos los ejercicios de la rutina con músculos y rol.
+selectRoutineMuscleVolume:
+SELECT re.targetSets, em.role, m.muscleGroupId
+FROM RoutineExercise re
+JOIN RoutineDay rd ON rd.id = re.routineDayId
+JOIN ExerciseMuscle em ON em.exerciseId = re.exerciseId
+JOIN Muscle m ON m.id = em.muscleId
+WHERE rd.routineId = ?;

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mancuerna centrada en la zona segura del icono adaptativo: el lienzo es de
+  108x108 pero el sistema solo garantiza el círculo central de 72 de diámetro
+  (de 18 a 90), así que el dibujo no se sale de ahí.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Disco exterior izquierdo -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M25,46 L28,46 Q31,46 31,49 L31,59 Q31,62 28,62 L25,62 Q22,62 22,59 L22,49 Q22,46 25,46 Z" />
+
+    <!-- Disco interior izquierdo -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M35,38 L37,38 Q41,38 41,42 L41,66 Q41,70 37,70 L35,70 Q31,70 31,66 L31,42 Q31,38 35,38 Z" />
+
+    <!-- Barra -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,50 L67,50 L67,58 L41,58 Z" />
+
+    <!-- Disco interior derecho -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M71,38 L73,38 Q77,38 77,42 L77,66 Q77,70 73,70 L71,70 Q67,70 67,66 L67,42 Q67,38 71,38 Z" />
+
+    <!-- Disco exterior derecho -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M80,46 L83,46 Q86,46 86,49 L86,59 Q86,62 83,62 L80,62 Q77,62 77,59 L77,49 Q77,46 80,46 Z" />
+</vector>

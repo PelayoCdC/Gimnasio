@@ -1,0 +1,48 @@
+-- Perfil de usuario (singleton) y medidas corporales.
+
+CREATE TABLE UserProfile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT,
+    sex TEXT NOT NULL DEFAULT 'M', -- 'M' | 'F'
+    birthDate TEXT,
+    heightCm REAL,
+    activityFactor REAL NOT NULL DEFAULT 1.375,
+    goal TEXT,
+    targetKcalOverride REAL
+);
+
+CREATE TABLE BodyMeasurement (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    weightKg REAL NOT NULL,
+    neckCm REAL,
+    waistCm REAL,
+    hipCm REAL,
+    bodyFatPercent REAL,
+    notes TEXT
+);
+
+CREATE INDEX idx_measurement_date ON BodyMeasurement(date);
+
+upsertProfile:
+INSERT OR REPLACE INTO UserProfile(id, name, sex, birthDate, heightCm, activityFactor, goal, targetKcalOverride)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?);
+
+selectProfile:
+SELECT * FROM UserProfile WHERE id = 1;
+
+insertMeasurement:
+INSERT INTO BodyMeasurement(date, weightKg, neckCm, waistCm, hipCm, bodyFatPercent, notes)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteMeasurement:
+DELETE FROM BodyMeasurement WHERE id = ?;
+
+selectMeasurements:
+SELECT * FROM BodyMeasurement ORDER BY date DESC, id DESC;
+
+selectLatestMeasurement:
+SELECT * FROM BodyMeasurement ORDER BY date DESC, id DESC LIMIT 1;
+
+selectMeasurementDates:
+SELECT DISTINCT date FROM BodyMeasurement ORDER BY date;

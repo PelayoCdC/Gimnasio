@@ -1,0 +1,193 @@
+-- Alimentos, recetas, diario de comidas y planes de dieta.
+
+CREATE TABLE Food (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    offBarcode TEXT UNIQUE, -- NULL si es alimento manual
+    name TEXT NOT NULL,
+    brand TEXT,
+    kcalPer100 REAL NOT NULL DEFAULT 0,
+    proteinPer100 REAL NOT NULL DEFAULT 0,
+    carbsPer100 REAL NOT NULL DEFAULT 0,
+    fatPer100 REAL NOT NULL DEFAULT 0,
+    fiberPer100 REAL,
+    servingSizeG REAL,
+    imageUrl TEXT,
+    isCustom INTEGER NOT NULL DEFAULT 0,
+    cachedAt TEXT
+);
+
+CREATE TABLE Recipe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    servings INTEGER NOT NULL DEFAULT 1,
+    notes TEXT
+);
+
+CREATE TABLE RecipeIngredient (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipeId INTEGER NOT NULL REFERENCES Recipe(id) ON DELETE CASCADE,
+    foodId INTEGER NOT NULL REFERENCES Food(id),
+    grams REAL NOT NULL
+);
+
+CREATE TABLE FoodLogEntry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    mealType TEXT NOT NULL, -- 'DESAYUNO'|'COMIDA'|'CENA'|'SNACK'
+    foodId INTEGER REFERENCES Food(id),
+    recipeId INTEGER REFERENCES Recipe(id),
+    grams REAL,
+    servings REAL,
+    loggedAt TEXT NOT NULL,
+    CHECK ((foodId IS NULL) != (recipeId IS NULL))
+);
+
+CREATE TABLE DietPlan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    targetKcal REAL,
+    targetProteinG REAL,
+    targetCarbsG REAL,
+    targetFatG REAL,
+    isActive INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE DietPlanMeal (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dietPlanId INTEGER NOT NULL REFERENCES DietPlan(id) ON DELETE CASCADE,
+    mealType TEXT NOT NULL,
+    foodId INTEGER REFERENCES Food(id),
+    recipeId INTEGER REFERENCES Recipe(id),
+    grams REAL,
+    servings REAL,
+    CHECK ((foodId IS NULL) != (recipeId IS NULL))
+);
+
+CREATE INDEX idx_food_name ON Food(name);
+CREATE INDEX idx_foodlog_date ON FoodLogEntry(date);
+CREATE INDEX idx_recipe_ingredient_recipe ON RecipeIngredient(recipeId);
+
+upsertFoodByBarcode {
+    UPDATE Food
+    SET name = :name, brand = :brand, kcalPer100 = :kcalPer100, proteinPer100 = :proteinPer100,
+        carbsPer100 = :carbsPer100, fatPer100 = :fatPer100, fiberPer100 = :fiberPer100,
+        servingSizeG = :servingSizeG, imageUrl = :imageUrl, cachedAt = :cachedAt
+    WHERE offBarcode = :offBarcode;
+
+    INSERT OR IGNORE INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt)
+    VALUES (:offBarcode, :name, :brand, :kcalPer100, :proteinPer100, :carbsPer100, :fatPer100, :fiberPer100, :servingSizeG, :imageUrl, 0, :cachedAt);
+}
+
+insertCustomFood:
+INSERT INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt)
+VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, NULL);
+
+updateFood:
+UPDATE Food SET name = ?, brand = ?, kcalPer100 = ?, proteinPer100 = ?, carbsPer100 = ?, fatPer100 = ?, fiberPer100 = ?, servingSizeG = ? WHERE id = ?;
+
+deleteFood:
+DELETE FROM Food WHERE id = ?;
+
+searchFoods:
+SELECT * FROM Food
+WHERE :query = '' OR name LIKE '%' || :query || '%' OR brand LIKE '%' || :query || '%'
+ORDER BY isCustom DESC, name
+LIMIT :limit;
+
+selectFoodById:
+SELECT * FROM Food WHERE id = ?;
+
+selectFoodByBarcode:
+SELECT * FROM Food WHERE offBarcode = ?;
+
+lastInsertRowId:
+SELECT last_insert_rowid();
+
+insertRecipe:
+INSERT INTO Recipe(name, servings, notes) VALUES (?, ?, ?);
+
+updateRecipe:
+UPDATE Recipe SET name = ?, servings = ?, notes = ? WHERE id = ?;
+
+deleteRecipe:
+DELETE FROM Recipe WHERE id = ?;
+
+selectAllRecipes:
+SELECT * FROM Recipe ORDER BY name;
+
+selectRecipeById:
+SELECT * FROM Recipe WHERE id = ?;
+
+insertRecipeIngredient:
+INSERT INTO RecipeIngredient(recipeId, foodId, grams) VALUES (?, ?, ?);
+
+updateRecipeIngredient:
+UPDATE RecipeIngredient SET grams = ? WHERE id = ?;
+
+deleteRecipeIngredient:
+DELETE FROM RecipeIngredient WHERE id = ?;
+
+selectIngredientsForRecipe:
+SELECT ri.*, f.name, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100
+FROM RecipeIngredient ri
+JOIN Food f ON f.id = ri.foodId
+WHERE ri.recipeId = ?;
+
+insertFoodLogEntry:
+INSERT INTO FoodLogEntry(date, mealType, foodId, recipeId, grams, servings, loggedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+updateFoodLogEntry:
+UPDATE FoodLogEntry SET grams = ?, servings = ?, mealType = ? WHERE id = ?;
+
+deleteFoodLogEntry:
+DELETE FROM FoodLogEntry WHERE id = ?;
+
+selectFoodLogForDate:
+SELECT fl.*,
+       f.name AS foodName, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100,
+       r.name AS recipeName, r.id AS rId
+FROM FoodLogEntry fl
+LEFT JOIN Food f ON f.id = fl.foodId
+LEFT JOIN Recipe r ON r.id = fl.recipeId
+WHERE fl.date = ?
+ORDER BY fl.mealType, fl.loggedAt;
+
+selectFoodLogDates:
+SELECT DISTINCT date FROM FoodLogEntry ORDER BY date;
+
+insertDietPlan:
+INSERT INTO DietPlan(name, targetKcal, targetProteinG, targetCarbsG, targetFatG, isActive) VALUES (?, ?, ?, ?, ?, ?);
+
+updateDietPlan:
+UPDATE DietPlan SET name = ?, targetKcal = ?, targetProteinG = ?, targetCarbsG = ?, targetFatG = ? WHERE id = ?;
+
+deleteDietPlan:
+DELETE FROM DietPlan WHERE id = ?;
+
+setActiveDietPlan {
+    UPDATE DietPlan SET isActive = 0;
+    UPDATE DietPlan SET isActive = 1 WHERE id = ?;
+}
+
+selectAllDietPlans:
+SELECT * FROM DietPlan ORDER BY isActive DESC, name;
+
+selectActiveDietPlan:
+SELECT * FROM DietPlan WHERE isActive = 1 LIMIT 1;
+
+insertDietPlanMeal:
+INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, recipeId, grams, servings) VALUES (?, ?, ?, ?, ?, ?);
+
+deleteDietPlanMeal:
+DELETE FROM DietPlanMeal WHERE id = ?;
+
+selectMealsForDietPlan:
+SELECT dpm.*,
+       f.name AS foodName, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100,
+       r.name AS recipeName
+FROM DietPlanMeal dpm
+LEFT JOIN Food f ON f.id = dpm.foodId
+LEFT JOIN Recipe r ON r.id = dpm.recipeId
+WHERE dpm.dietPlanId = ?
+ORDER BY dpm.mealType;

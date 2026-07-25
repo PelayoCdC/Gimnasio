@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Gimnasio</string>
+    <string name="tab_home">Inicio</string>
+    <string name="tab_workout">Entrenamiento</string>
+    <string name="tab_calendar">Calendario</string>
+    <string name="tab_nutrition">Nutrición</string>
+    <string name="tab_profile">Perfil</string>
+    <string name="placeholder_coming_soon">Próximamente</string>
+</resources>

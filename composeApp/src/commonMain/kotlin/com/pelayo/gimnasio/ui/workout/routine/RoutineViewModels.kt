@@ -1,0 +1,179 @@
+package com.pelayo.gimnasio.ui.workout.routine
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.pelayo.gimnasio.data.repository.ExerciseRepository
+import com.pelayo.gimnasio.data.repository.RoutineRepository
+import com.pelayo.gimnasio.data.repository.WorkoutRepository
+import com.pelayo.gimnasio.domain.calc.BalanceReport
+import com.pelayo.gimnasio.domain.model.ExerciseListItem
+import com.pelayo.gimnasio.domain.model.RoutineDetail
+import com.pelayo.gimnasio.domain.model.RoutineGoal
+import com.pelayo.gimnasio.domain.model.RoutineSummary
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class RoutineListViewModel(
+    private val repository: RoutineRepository,
+) : ViewModel() {
+
+    val routines: StateFlow<List<RoutineSummary>> = repository.routines()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun createRoutine(name: String, goal: RoutineGoal, onCreated: (Long) -> Unit) {
+        viewModelScope.launch {
+            val id = repository.createRoutine(name.trim().ifBlank { "Nueva rutina" }, null, goal)
+            onCreated(id)
+        }
+    }
+
+    fun deleteRoutine(id: Long) {
+        viewModelScope.launch { repository.deleteRoutine(id) }
+    }
+
+    fun setActive(id: Long) {
+        viewModelScope.launch { repository.setActive(id) }
+    }
+}
+
+class RoutineDetailViewModel(
+    private val routineId: Long,
+    private val repository: RoutineRepository,
+    private val workoutRepository: WorkoutRepository,
+) : ViewModel() {
+
+    /** Abre (o retoma) la sesión de entrenamiento de un día y devuelve su id. */
+    fun startWorkout(dayId: Long, onStarted: (Long) -> Unit) {
+        viewModelScope.launch { onStarted(workoutRepository.startSession(dayId)) }
+    }
+
+    private val _routine = MutableStateFlow<RoutineDetail?>(null)
+    val routine: StateFlow<RoutineDetail?> = _routine
+
+    private val _balance = MutableStateFlow<BalanceReport?>(null)
+    val balance: StateFlow<BalanceReport?> = _balance
+
+    init {
+        reload()
+    }
+
+    fun reload() {
+        viewModelScope.launch {
+            _routine.value = repository.routineDetail(routineId)
+            _balance.value = repository.balanceReport(routineId)
+        }
+    }
+
+    fun addDay(name: String, weekday: Int?) {
+        viewModelScope.launch {
+            repository.addDay(routineId, name.trim().ifBlank { "Día nuevo" }, weekday)
+            reload()
+        }
+    }
+
+    fun deleteDay(dayId: Long) {
+        viewModelScope.launch {
+            repository.deleteDay(dayId)
+            reload()
+        }
+    }
+
+    fun renameRoutine(name: String, goal: RoutineGoal) {
+        viewModelScope.launch {
+            val current = _routine.value ?: return@launch
+            repository.updateRoutine(routineId, name, current.description, goal)
+            reload()
+        }
+    }
+
+    fun setActive() {
+        viewModelScope.launch {
+            repository.setActive(routineId)
+            reload()
+        }
+    }
+
+    fun removeExercise(routineExerciseId: Long) {
+        viewModelScope.launch {
+            repository.removeRoutineExercise(routineExerciseId)
+            reload()
+        }
+    }
+
+    fun moveExercise(routineExerciseId: Long, delta: Int) {
+        viewModelScope.launch {
+            repository.moveRoutineExercise(routineExerciseId, delta)
+            reload()
+        }
+    }
+
+    fun updateExercise(
+        id: Long,
+        sets: Int,
+        repsMin: Int?,
+        repsMax: Int?,
+        timeSeconds: Int?,
+        weight: Double?,
+        restSeconds: Int,
+        position: Int,
+    ) {
+        viewModelScope.launch {
+            repository.updateRoutineExercise(
+                id = id,
+                targetSets = sets,
+                targetRepsMin = repsMin,
+                targetRepsMax = repsMax,
+                targetTimeSeconds = timeSeconds,
+                targetWeight = weight,
+                restSeconds = restSeconds,
+                notes = null,
+                position = position,
+            )
+            reload()
+        }
+    }
+}
+
+/** Selector de ejercicios para añadir a un día de rutina. */
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
+class ExercisePickerViewModel(
+    private val dayId: Long,
+    private val routineId: Long,
+    private val exerciseRepository: ExerciseRepository,
+    private val routineRepository: RoutineRepository,
+) : ViewModel() {
+
+    val query = MutableStateFlow("")
+    val muscleGroupFilter = MutableStateFlow<Long?>(null)
+
+    val muscleGroups = exerciseRepository.muscleGroups()
+
+    val exercises: StateFlow<List<ExerciseListItem>> =
+        combine(query.debounce(200), muscleGroupFilter) { q, group -> q to group }
+            .flatMapLatest { (q, group) -> exerciseRepository.searchExercises(q, group, null) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setMuscleGroup(id: Long?) {
+        muscleGroupFilter.value = if (muscleGroupFilter.value == id) null else id
+    }
+
+    fun addExercise(exerciseId: Long, onDone: () -> Unit) {
+        viewModelScope.launch {
+            val routine = routineRepository.routineDetail(routineId)
+            routineRepository.addExerciseToDay(
+                dayId = dayId,
+                exerciseId = exerciseId,
+                goal = routine?.goal ?: RoutineGoal.HIPERTROFIA,
+            )
+            onDone()
+        }
+    }
+}

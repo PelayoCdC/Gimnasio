@@ -1,0 +1,111 @@
+-- Sesiones de entrenamiento y registro de series.
+
+CREATE TABLE WorkoutSession (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    routineId INTEGER,
+    routineDayId INTEGER,
+    date TEXT NOT NULL, -- LocalDate ISO
+    startTime TEXT,
+    durationMinutes INTEGER,
+    kcalBurned REAL,
+    notes TEXT,
+    isCompleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE SetLog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sessionId INTEGER NOT NULL REFERENCES WorkoutSession(id) ON DELETE CASCADE,
+    exerciseId INTEGER NOT NULL REFERENCES Exercise(id),
+    setNumber INTEGER NOT NULL,
+    weightKg REAL,
+    reps INTEGER,
+    timeSeconds INTEGER,
+    isWarmup INTEGER NOT NULL DEFAULT 0,
+    rpe REAL
+);
+
+CREATE INDEX idx_session_date ON WorkoutSession(date);
+CREATE INDEX idx_setlog_session ON SetLog(sessionId);
+CREATE INDEX idx_setlog_exercise ON SetLog(exerciseId);
+
+insertSession:
+INSERT INTO WorkoutSession(routineId, routineDayId, date, startTime, durationMinutes, kcalBurned, notes, isCompleted)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+completeSession:
+UPDATE WorkoutSession SET durationMinutes = ?, kcalBurned = ?, notes = ?, isCompleted = 1 WHERE id = ?;
+
+deleteSession:
+DELETE FROM WorkoutSession WHERE id = ?;
+
+selectSessionById:
+SELECT * FROM WorkoutSession WHERE id = ?;
+
+selectSessionsInRange:
+SELECT * FROM WorkoutSession WHERE date >= :from AND date <= :to ORDER BY date;
+
+selectSessionsForDate:
+SELECT * FROM WorkoutSession WHERE date = ? ORDER BY id;
+
+selectRecentSessions:
+SELECT * FROM WorkoutSession WHERE isCompleted = 1 ORDER BY date DESC, id DESC LIMIT ?;
+
+countCompletedSessions:
+SELECT COUNT(*) FROM WorkoutSession WHERE isCompleted = 1;
+
+selectCompletedSessionDates:
+SELECT DISTINCT date FROM WorkoutSession WHERE isCompleted = 1 ORDER BY date;
+
+-- Último día de rutina que se llegó a terminar; marca por dónde sigue la rotación.
+selectLastCompletedRoutineDay:
+SELECT routineDayId FROM WorkoutSession
+WHERE isCompleted = 1 AND routineDayId IS NOT NULL
+ORDER BY date DESC, id DESC
+LIMIT 1;
+
+insertSetLog:
+INSERT INTO SetLog(sessionId, exerciseId, setNumber, weightKg, reps, timeSeconds, isWarmup, rpe)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+updateSetLog:
+UPDATE SetLog SET weightKg = ?, reps = ?, timeSeconds = ?, isWarmup = ?, rpe = ? WHERE id = ?;
+
+deleteSetLog:
+DELETE FROM SetLog WHERE id = ?;
+
+selectSetsForSession:
+SELECT s.*, e.nameEs, e.exerciseType
+FROM SetLog s
+JOIN Exercise e ON e.id = s.exerciseId
+WHERE s.sessionId = ?
+ORDER BY s.exerciseId, s.setNumber;
+
+-- Historial de un ejercicio: sets con la fecha de su sesión (para gráficas).
+selectSetsForExercise:
+SELECT s.*, w.date
+FROM SetLog s
+JOIN WorkoutSession w ON w.id = s.sessionId
+WHERE s.exerciseId = ? AND w.isCompleted = 1 AND s.isWarmup = 0
+ORDER BY w.date, s.setNumber;
+
+-- Series de las últimas sesiones completadas de un ejercicio, agrupables por sesión.
+-- Alimenta al consejo de progresión de peso.
+selectRecentSetsForExercise:
+SELECT s.*, w.date, w.id AS sessionKey
+FROM SetLog s
+JOIN WorkoutSession w ON w.id = s.sessionId
+WHERE s.exerciseId = :exerciseId AND w.isCompleted = 1 AND s.isWarmup = 0
+ORDER BY w.date DESC, w.id DESC, s.setNumber;
+
+-- Últimos sets registrados de un ejercicio (sesión completada más reciente que lo contenga).
+selectLastSetsForExercise:
+SELECT s.*
+FROM SetLog s
+JOIN WorkoutSession w ON w.id = s.sessionId
+WHERE s.exerciseId = :exerciseId AND w.isCompleted = 1
+  AND w.id = (
+    SELECT MAX(w2.id) FROM WorkoutSession w2
+    JOIN SetLog s2 ON s2.sessionId = w2.id
+    WHERE s2.exerciseId = :exerciseId AND w2.isCompleted = 1
+  )
+ORDER BY s.setNumber;

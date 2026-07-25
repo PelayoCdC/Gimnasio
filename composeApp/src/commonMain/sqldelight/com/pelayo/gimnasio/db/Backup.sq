@@ -1,0 +1,84 @@
+-- Consultas que solo usa la exportación/importación de copias de seguridad.
+-- Van aparte para no enturbiar las de las pantallas.
+
+selectCustomExercises:
+SELECT * FROM Exercise WHERE isCustom = 1;
+
+selectExerciseRef:
+SELECT id, wgerId, isCustom, nameEs FROM Exercise WHERE id = ?;
+
+selectExerciseIdByName:
+SELECT id FROM Exercise WHERE nameEs = ? AND isCustom = 1 LIMIT 1;
+
+selectAllRoutineExercisesForDay:
+SELECT re.*, e.wgerId, e.isCustom, e.nameEs
+FROM RoutineExercise re
+JOIN Exercise e ON e.id = re.exerciseId
+WHERE re.routineDayId = ?
+ORDER BY re.position;
+
+selectAllSessions:
+SELECT * FROM WorkoutSession ORDER BY date, id;
+
+selectSetsForSessionWithRef:
+SELECT s.*, e.wgerId, e.isCustom, e.nameEs
+FROM SetLog s
+JOIN Exercise e ON e.id = s.exerciseId
+WHERE s.sessionId = ?
+ORDER BY s.exerciseId, s.setNumber;
+
+selectRoutineNameById:
+SELECT name FROM Routine WHERE id = ?;
+
+selectCustomFoods:
+SELECT * FROM Food WHERE isCustom = 1;
+
+selectFoodRef:
+SELECT id, offBarcode, name, isCustom FROM Food WHERE id = ?;
+
+selectFoodIdByName:
+SELECT id FROM Food WHERE name = ? AND isCustom = 1 LIMIT 1;
+
+selectAllFoodLogEntries:
+SELECT * FROM FoodLogEntry ORDER BY date, loggedAt;
+
+selectRecipeIdByName:
+SELECT id FROM Recipe WHERE name = ? LIMIT 1;
+
+-- Inserta respetando el flag de activo, que la consulta normal no permite.
+insertDietPlanForBackup:
+INSERT INTO DietPlan(name, targetKcal, targetProteinG, targetCarbsG, targetFatG, isActive)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectAllDietPlansForBackup:
+SELECT * FROM DietPlan ORDER BY id;
+
+selectDietPlanMealsForBackup:
+SELECT dpm.*, f.offBarcode, f.name AS foodName, f.isCustom, r.name AS recipeName
+FROM DietPlanMeal dpm
+LEFT JOIN Food f ON f.id = dpm.foodId
+LEFT JOIN Recipe r ON r.id = dpm.recipeId
+WHERE dpm.dietPlanId = ?
+ORDER BY dpm.id;
+
+selectRecipeNameById:
+SELECT name FROM Recipe WHERE id = ?;
+
+-- Borrado completo de los datos del usuario, para restaurar sobre limpio.
+-- El catálogo de wger se conserva: no es dato del usuario y volver a bajarlo es caro.
+deleteAllUserData {
+    DELETE FROM SetLog;
+    DELETE FROM WorkoutSession;
+    DELETE FROM RoutineExercise;
+    DELETE FROM RoutineDay;
+    DELETE FROM Routine;
+    DELETE FROM FoodLogEntry;
+    DELETE FROM DietPlanMeal;
+    DELETE FROM DietPlan;
+    DELETE FROM RecipeIngredient;
+    DELETE FROM Recipe;
+    DELETE FROM BodyMeasurement;
+    DELETE FROM UserProfile;
+    DELETE FROM Food WHERE isCustom = 1;
+    DELETE FROM Exercise WHERE isCustom = 1;
+}
