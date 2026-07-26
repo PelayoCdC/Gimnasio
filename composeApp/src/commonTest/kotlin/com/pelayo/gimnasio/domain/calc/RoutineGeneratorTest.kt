@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.domain.calc
 
+import com.pelayo.gimnasio.domain.model.ExperienceLevel
 import com.pelayo.gimnasio.domain.model.MuscleGroups
 import com.pelayo.gimnasio.domain.model.MuscleRole
 import com.pelayo.gimnasio.domain.model.RoutineGoal
@@ -169,6 +170,146 @@ class RoutineGeneratorTest {
         assertEquals(3, routine.days.size)
         assertTrue(routine.days.all { it.exerciseIds.isEmpty() })
         assertTrue(routine.uncoveredGroups.isNotEmpty())
+    }
+
+    @Test
+    fun con_menos_tiempo_propone_menos_ejercicios() {
+        val catalog = fullCatalog()
+        val corta = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            minutesPerSession = 30,
+        )
+        val larga = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            minutesPerSession = 90,
+        )
+
+        val ejerciciosCortos = corta.days.first().exerciseIds.size
+        val ejerciciosLargos = larga.days.first().exerciseIds.size
+        assertTrue(
+            ejerciciosCortos < ejerciciosLargos,
+            "30 min ha dado $ejerciciosCortos ejercicios y 90 min $ejerciciosLargos",
+        )
+    }
+
+    @Test
+    fun la_duracion_estimada_se_acerca_al_tiempo_pedido() {
+        val catalog = fullCatalog()
+        listOf(30, 45, 60, 90).forEach { minutos ->
+            val routine = RoutineGenerator.generate(
+                daysPerWeek = 3,
+                goal = RoutineGoal.HIPERTROFIA,
+                catalog = catalog,
+                minutesPerSession = minutos,
+            )
+            val estimado = routine.days.first().estimatedMinutes
+            assertTrue(
+                estimado <= minutos + 10,
+                "pedidos $minutos min y la sesión sale de $estimado min",
+            )
+        }
+    }
+
+    @Test
+    fun un_descanso_largo_deja_menos_hueco_para_ejercicios() {
+        val catalog = fullCatalog()
+        // Mismo tiempo, pero fuerza descansa 180 s entre series e hipertrofia 90 s.
+        val fuerza = RoutineGenerator.generate(3, RoutineGoal.FUERZA, catalog, minutesPerSession = 60)
+        val hipertrofia = RoutineGenerator.generate(3, RoutineGoal.HIPERTROFIA, catalog, minutesPerSession = 60)
+
+        assertTrue(
+            fuerza.days.first().exerciseIds.size < hipertrofia.days.first().exerciseIds.size,
+            "fuerza: ${fuerza.days.first().exerciseIds.size}, " +
+                "hipertrofia: ${hipertrofia.days.first().exerciseIds.size}",
+        )
+    }
+
+    @Test
+    fun a_un_principiante_no_le_propone_ejercicios_avanzados() {
+        // El catálogo base se crea primero para que los ids no colisionen.
+        val base = fullCatalog()
+        val avanzado = exercise("Cargada de fuerza", MuscleGroups.CUADRICEPS.id, equipment = setOf(1L))
+        val catalog = base + avanzado
+
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            level = ExperienceLevel.PRINCIPIANTE,
+        )
+
+        val elegidos = routine.days.flatMap { it.exerciseIds }
+        assertTrue(avanzado.id !in elegidos, "ha propuesto una cargada a un principiante")
+        assertTrue(routine.excludedForLevel > 0)
+    }
+
+    @Test
+    fun entre_dos_opciones_el_principiante_recibe_la_mas_sencilla() {
+        nextId = 1L
+        // El técnico va primero para descartar que solo esté respetando el orden de id.
+        val tecnico = exercise("Sentadilla con barra", MuscleGroups.CUADRICEPS.id, equipment = setOf(1L))
+        val basico = exercise("Prensa de piernas", MuscleGroups.CUADRICEPS.id)
+
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 1,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = listOf(tecnico, basico),
+            level = ExperienceLevel.PRINCIPIANTE,
+        )
+
+        assertEquals(basico.id, routine.days.single().exerciseIds.first())
+    }
+
+    @Test
+    fun el_avanzado_si_puede_recibir_ejercicios_tecnicos() {
+        nextId = 1L
+        val avanzado = exercise("Cargada de fuerza", MuscleGroups.CUADRICEPS.id, equipment = setOf(1L))
+
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 1,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = listOf(avanzado),
+            level = ExperienceLevel.AVANZADO,
+        )
+
+        assertTrue(avanzado.id in routine.days.single().exerciseIds)
+        assertEquals(0, routine.excludedForLevel)
+    }
+
+    @Test
+    fun el_principiante_entrena_a_cuerpo_completo_en_vez_de_dividir_por_patron() {
+        val catalog = fullCatalog()
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            level = ExperienceLevel.PRINCIPIANTE,
+        )
+
+        assertEquals(
+            listOf("Cuerpo completo A", "Cuerpo completo B", "Cuerpo completo C"),
+            routine.days.map { it.name },
+        )
+        assertTrue(routine.name.startsWith("Cuerpo completo"))
+    }
+
+    @Test
+    fun el_principiante_hace_menos_series_y_repeticiones_mas_seguras() {
+        val catalog = fullCatalog()
+        val principiante = RoutineGenerator.generate(
+            3, RoutineGoal.FUERZA, catalog, level = ExperienceLevel.PRINCIPIANTE,
+        ).prescription
+        assertEquals(3, principiante.sets)
+        assertEquals(5, principiante.repsMin)
+
+        val avanzado = RoutineGenerator.generate(
+            3, RoutineGoal.HIPERTROFIA, catalog, level = ExperienceLevel.AVANZADO,
+        ).prescription
+        assertEquals(5, avanzado.sets)
     }
 
     @Test

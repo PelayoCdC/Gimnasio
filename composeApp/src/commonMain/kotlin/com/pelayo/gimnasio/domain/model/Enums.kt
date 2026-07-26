@@ -10,6 +10,15 @@ enum class ExerciseType { REPS, TIME }
 
 enum class RoutineGoal { FUERZA, HIPERTROFIA, RESISTENCIA, PERDIDA_GRASA }
 
+/** Experiencia entrenando, que decide qué ejercicios y qué volumen propone el generador. */
+enum class ExperienceLevel { PRINCIPIANTE, INTERMEDIO, AVANZADO }
+
+/**
+ * Exigencia técnica de un ejercicio. No es lo duro que resulta, sino lo fácil que
+ * es hacerlo mal y lesionarse sin supervisión.
+ */
+enum class ExerciseComplexity { BASICO, INTERMEDIO, AVANZADO }
+
 enum class MealType { DESAYUNO, COMIDA, CENA, SNACK }
 
 enum class BmiCategory { BAJO_PESO, NORMAL, SOBREPESO, OBESIDAD }

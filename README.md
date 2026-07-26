@@ -19,8 +19,12 @@ busca un ejercicio o un alimento nuevo.
   los secundarios) y avisa si falta un grupo, si va escaso o si hay
   descompensación entre empuje y tirón o entre tren superior y piernas.
 - **Generador automático** de rutinas equilibradas según los días que entrenes,
-  tu objetivo y el material del que dispongas. Las rutinas se pueden duplicar
-  para ajustarlas sin perder la anterior.
+  el tiempo que tengas por sesión, tu nivel, tu objetivo y el material del que
+  dispongas. El tiempo decide cuántos ejercicios caben —recortando antes el
+  aislamiento que los compuestos— y el nivel decide cuáles: a quien empieza no le
+  propone cargadas ni buenos días, le da menos series y le monta cuerpo completo
+  en vez de una división por patrones. Las rutinas se pueden duplicar para
+  ajustarlas sin perder la anterior.
 - Registro de series con peso y repeticiones, o con tiempo. Prerrellena lo que
   hiciste la vez anterior, y lo apuntado se puede corregir después: un peso mal
   tecleado no se queda envenenando las gráficas para siempre.

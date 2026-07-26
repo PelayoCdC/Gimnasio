@@ -70,6 +70,27 @@ data class TrainingPrescription(
             RoutineGoal.RESISTENCIA -> TrainingPrescription(3, 12, 20, 60)
             RoutineGoal.PERDIDA_GRASA -> TrainingPrescription(3, 12, 20, 60)
         }
+
+        /**
+         * Ajusta la prescripción al nivel: quien empieza necesita menos series y,
+         * si busca fuerza, series más largas — entrenar a 3 repeticiones exige una
+         * técnica que todavía no tiene. Quien va sobrado aguanta una serie más en
+         * los objetivos de carga.
+         */
+        fun forGoal(goal: RoutineGoal, level: ExperienceLevel): TrainingPrescription {
+            val base = forGoal(goal)
+            return when (level) {
+                ExperienceLevel.PRINCIPIANTE -> when (goal) {
+                    RoutineGoal.FUERZA -> base.copy(sets = 3, repsMin = 5, repsMax = 8, restSeconds = 150)
+                    else -> base.copy(sets = 3)
+                }
+                ExperienceLevel.INTERMEDIO -> base
+                ExperienceLevel.AVANZADO -> when (goal) {
+                    RoutineGoal.FUERZA, RoutineGoal.HIPERTROFIA -> base.copy(sets = base.sets + 1)
+                    else -> base
+                }
+            }
+        }
     }
 }
 
@@ -79,6 +100,28 @@ val RoutineGoal.labelEs: String
         RoutineGoal.HIPERTROFIA -> "Hipertrofia"
         RoutineGoal.RESISTENCIA -> "Resistencia"
         RoutineGoal.PERDIDA_GRASA -> "Pérdida de grasa"
+    }
+
+val ExperienceLevel.labelEs: String
+    get() = when (this) {
+        ExperienceLevel.PRINCIPIANTE -> "Principiante"
+        ExperienceLevel.INTERMEDIO -> "Intermedio"
+        ExperienceLevel.AVANZADO -> "Avanzado"
+    }
+
+/** Explica en la propia pantalla qué significa cada nivel, para que no se elija a ojo. */
+val ExperienceLevel.hintEs: String
+    get() = when (this) {
+        ExperienceLevel.PRINCIPIANTE -> "Menos de 6 meses entrenando: ejercicios sencillos y seguros de ejecutar."
+        ExperienceLevel.INTERMEDIO -> "Ya dominas los básicos con barra y mancuernas."
+        ExperienceLevel.AVANZADO -> "Sin restricciones: entran también los movimientos más técnicos."
+    }
+
+val ExerciseComplexity.labelEs: String
+    get() = when (this) {
+        ExerciseComplexity.BASICO -> "Básico"
+        ExerciseComplexity.INTERMEDIO -> "Técnico"
+        ExerciseComplexity.AVANZADO -> "Muy técnico"
     }
 
 val weekdayNamesEs = listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")

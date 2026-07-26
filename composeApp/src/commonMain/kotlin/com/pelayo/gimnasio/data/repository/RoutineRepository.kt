@@ -82,11 +82,14 @@ class RoutineRepository(
 
     /** Añade un ejercicio al día usando la prescripción por defecto del objetivo de la rutina. */
     suspend fun addExerciseToDay(dayId: Long, exerciseId: Long, goal: RoutineGoal) =
+        addExerciseToDay(dayId, exerciseId, TrainingPrescription.forGoal(goal))
+
+    /** Añade un ejercicio al día con una prescripción concreta (la del generador, ajustada al nivel). */
+    suspend fun addExerciseToDay(dayId: Long, exerciseId: Long, p: TrainingPrescription) =
         withContext(dispatcher) {
             db.transaction {
                 val position = q.selectExercisesForDay(dayId).executeAsList().size.toLong()
                 val exercise = db.catalogQueries.selectExerciseById(exerciseId).executeAsOne()
-                val p = TrainingPrescription.forGoal(goal)
                 val isTimed = exercise.exerciseType == ExerciseType.TIME.name
                 q.insertRoutineExercise(
                     routineDayId = dayId,
@@ -267,11 +270,16 @@ class RoutineRepository(
 
     /** Persiste una rutina propuesta por el generador y devuelve su id. */
     suspend fun saveGenerated(generated: GeneratedRoutine): Long = withContext(dispatcher) {
-        val routineId = createRoutine(generated.name, null, generated.goal, isGenerated = true)
+        val routineId = createRoutine(
+            name = generated.name,
+            description = generated.description,
+            goal = generated.goal,
+            isGenerated = true,
+        )
         generated.days.forEachIndexed { index, day ->
             val dayId = addDay(routineId, day.name, weekday = null)
             day.exerciseIds.forEach { exerciseId ->
-                addExerciseToDay(dayId, exerciseId, generated.goal)
+                addExerciseToDay(dayId, exerciseId, generated.prescription)
             }
             // dayIndex ya lo asigna addDay por orden de inserción.
             check(index >= 0)

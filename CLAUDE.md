@@ -161,6 +161,32 @@ material3`. El precio son los avisos de deprecación ("Specify dependency
 directly") y los de "same unique_name" del resolvedor de klibs; ambos son
 esperables y no rompen nada. Hay que esperar a que AndroidX publique Apple.
 
+**wger no dice lo difícil que es un ejercicio, así que se deduce.**
+`ExerciseComplexityClassifier` lo clasifica en básico/intermedio/avanzado por el
+nombre (normalizado sin tildes) y el material: barra, barra Z, kettlebell y barra
+de dominadas suben a intermedio, y hay una lista de palabras clave para lo
+balístico, lo invertido y lo que carga la columna en flexión. Ante la duda
+devuelve básico: el generador combina el filtro con la preferencia por lo
+sencillo, así que un falso negativo suelto se diluye pero un catálogo vacío no.
+Si el clasificador se afina, hay que mirar `RoutineGeneratorTest`, que da por
+hecho que el catálogo de prueba ("Pecho compuesto", "Pecho aislamiento 1"…) sale
+básico entero.
+
+**El generador nunca repite ejercicio en la semana, ni siquiera para tapar un
+hueco.** Las plantillas de día traen más huecos de los que se usan, ordenados de
+más a menos importante, y el tiempo disponible decide dónde se corta
+(`SessionTimeEstimator`). Si un grupo agota sus ejercicios a mitad de semana el
+hueco se queda sin rellenar, porque ese grupo ya está entrenado; solo se avisa en
+`uncoveredGroups` cuando no hay **ningún** ejercicio utilizable para el grupo, que
+es lo que sí indica un problema de material o de nivel.
+
+**La prescripción del generador no es la del objetivo a secas.**
+`TrainingPrescription.forGoal(goal, level)` recorta series al principiante y se
+las sube al avanzado, así que `saveGenerated` guarda la prescripción de la
+propuesta y no vuelve a llamar a `forGoal(goal)`. Si se añade otro camino que
+persista rutinas generadas, hay que pasarle la prescripción o el ajuste de nivel
+se pierde al guardar.
+
 **El entrenamiento en curso se refresca en dos niveles.** `reload()` recarga todo
 (plan, prerrelleno e historial de progresión) y solo se llama al abrir la
 pantalla; al apuntar o borrar una serie se usa `refreshLoggedSets()`, que solo
@@ -172,7 +198,8 @@ no cambian mientras entrenas.
 
 Están hechas todas las funcionalidades planificadas: inicio con racha y logros,
 catálogo de ejercicios, rutinas con aviso de descompensación, mapa muscular y
-ejercicios reordenables, generador automático de rutinas, registro de series con
+ejercicios reordenables, generador automático de rutinas por tiempo y nivel,
+registro de series con
 cronómetro de descanso y sugerencia de subida de peso, calendario, métricas
 corporales, gasto calórico por METs, diario de nutrición con balance calórico,
 recetas, planes de dieta, escáner de código de barras, recordatorios, copia de

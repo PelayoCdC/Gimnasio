@@ -34,7 +34,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.pelayo.gimnasio.domain.calc.RoutineGenerator
+import com.pelayo.gimnasio.domain.model.ExerciseComplexity
+import com.pelayo.gimnasio.domain.model.ExperienceLevel
 import com.pelayo.gimnasio.domain.model.RoutineGoal
+import com.pelayo.gimnasio.domain.model.hintEs
 import com.pelayo.gimnasio.domain.model.labelEs
 import com.pelayo.gimnasio.ui.components.BalancePanel
 import com.pelayo.gimnasio.ui.theme.WarningAmber
@@ -49,6 +53,8 @@ fun RoutineGeneratorScreen(
 ) {
     val daysPerWeek by viewModel.daysPerWeek.collectAsState()
     val goal by viewModel.goal.collectAsState()
+    val level by viewModel.level.collectAsState()
+    val minutesPerSession by viewModel.minutesPerSession.collectAsState()
     val equipment by viewModel.equipment.collectAsState()
     val selectedEquipment by viewModel.selectedEquipment.collectAsState()
     val preview by viewModel.preview.collectAsState()
@@ -101,6 +107,39 @@ fun RoutineGeneratorScreen(
                 }
             }
 
+            item { Text("¿Cuánto tiempo tienes por sesión?", style = MaterialTheme.typography.titleMedium) }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RoutineGenerator.SESSION_LENGTHS.forEach { minutes ->
+                        FilterChip(
+                            selected = minutesPerSession == minutes,
+                            onClick = { viewModel.setMinutesPerSession(minutes) },
+                            label = { Text("$minutes min") },
+                        )
+                    }
+                }
+            }
+
+            item { Text("¿Cuál es tu nivel?", style = MaterialTheme.typography.titleMedium) }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExperienceLevel.entries.forEach { option ->
+                        FilterChip(
+                            selected = level == option,
+                            onClick = { viewModel.setLevel(option) },
+                            label = { Text(option.labelEs) },
+                        )
+                    }
+                }
+            }
+            item {
+                Text(
+                    level.hintEs,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             item { Text("¿Cuál es tu objetivo?", style = MaterialTheme.typography.titleMedium) }
             item {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -151,13 +190,32 @@ fun RoutineGeneratorScreen(
                     Text(result.routine.name, style = MaterialTheme.typography.titleLarge)
                 }
                 item {
-                    Text(
-                        "${result.routine.prescription.sets} series de " +
-                            "${result.routine.prescription.repsMin}-${result.routine.prescription.repsMax} " +
-                            "repeticiones · ${result.routine.prescription.restSeconds} s de descanso",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column {
+                        Text(
+                            "${result.routine.prescription.sets} series de " +
+                                "${result.routine.prescription.repsMin}-${result.routine.prescription.repsMax} " +
+                                "repeticiones · ${result.routine.prescription.restSeconds} s de descanso",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "${result.routine.level.labelEs} · unos ${result.routine.estimatedMinutes} min " +
+                                "por sesión, calentamiento incluido",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                if (result.routine.excludedForLevel > 0) {
+                    item {
+                        Text(
+                            "He dejado fuera ${result.routine.excludedForLevel} ejercicios demasiado " +
+                                "técnicos o con riesgo de lesión para tu nivel.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 if (result.routine.uncoveredGroups.isNotEmpty()) {
@@ -182,11 +240,27 @@ fun RoutineGeneratorScreen(
                     item(key = "gen-${day.name}") {
                         ElevatedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp)) {
-                                Text(day.name, style = MaterialTheme.typography.titleSmall)
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(day.name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        "≈ ${day.estimatedMinutes} min",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 Spacer(Modifier.height(4.dp))
                                 day.exerciseIds.forEach { id ->
+                                    val complexity = result.exerciseComplexity[id]
                                     Text(
-                                        result.exerciseNames[id] ?: "Ejercicio",
+                                        (result.exerciseNames[id] ?: "Ejercicio") +
+                                            if (complexity != null && complexity != ExerciseComplexity.BASICO) {
+                                                " · ${complexity.labelEs.lowercase()}"
+                                            } else {
+                                                ""
+                                            },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
