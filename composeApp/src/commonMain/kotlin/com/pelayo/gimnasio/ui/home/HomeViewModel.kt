@@ -13,6 +13,7 @@ import com.pelayo.gimnasio.domain.calc.ScheduledDay
 import com.pelayo.gimnasio.domain.calc.StreakCalculator
 import com.pelayo.gimnasio.domain.calc.StreakInfo
 import com.pelayo.gimnasio.domain.model.BodyMeasurementEntry
+import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.domain.model.CalorieBalance
 import com.pelayo.gimnasio.util.today
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,8 @@ data class HomeState(
     val streak: StreakInfo? = null,
     /** Logros recién alcanzados, para celebrarlos en la portada. */
     val latestAchievement: Achievement? = null,
+    /** Entrenamiento empezado y sin cerrar; si no se ofrece, se queda atascado. */
+    val unfinished: CalendarSession? = null,
 )
 
 class HomeViewModel(
@@ -96,6 +99,7 @@ class HomeViewModel(
                 profileIncomplete = metrics == null,
                 streak = streak,
                 latestAchievement = achievements.lastOrNull { it.unlocked },
+                unfinished = workoutRepository.unfinishedSessions().firstOrNull(),
             )
         }
     }
@@ -103,5 +107,13 @@ class HomeViewModel(
     /** Abre (o retoma) la sesión del día propuesto y devuelve su id. */
     fun startWorkout(dayId: Long, onStarted: (Long) -> Unit) {
         viewModelScope.launch { onStarted(workoutRepository.startSession(dayId)) }
+    }
+
+    fun discardUnfinished() {
+        val sessionId = _state.value.unfinished?.sessionId ?: return
+        viewModelScope.launch {
+            workoutRepository.deleteSession(sessionId)
+            reload()
+        }
     }
 }

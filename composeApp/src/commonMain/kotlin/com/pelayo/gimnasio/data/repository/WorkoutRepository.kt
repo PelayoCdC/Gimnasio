@@ -120,6 +120,45 @@ class WorkoutRepository(
 
     suspend fun deleteSet(setId: Long) = withContext(dispatcher) { q.deleteSetLog(setId) }
 
+    /** Corrige una serie ya registrada, también en sesiones ya terminadas. */
+    suspend fun updateSet(
+        setId: Long,
+        weightKg: Double?,
+        reps: Int?,
+        timeSeconds: Int?,
+        isWarmup: Boolean = false,
+    ) = withContext(dispatcher) {
+        q.updateSetLog(weightKg, reps?.toLong(), timeSeconds?.toLong(), if (isWarmup) 1 else 0, null, setId)
+    }
+
+    /**
+     * Sesiones empezadas y no terminadas. Se quedarían huérfanas si no se
+     * ofrece retomarlas o descartarlas.
+     */
+    suspend fun unfinishedSessions(): List<CalendarSession> = withContext(dispatcher) {
+        q.selectUnfinishedSessions().executeAsList().map { session ->
+            val day = session.routineDayId?.let {
+                routines.selectRoutineDayById(it).executeAsOneOrNull()
+            }
+            CalendarSession(
+                sessionId = session.id,
+                date = LocalDate.parse(session.date),
+                dayName = day?.name ?: "Entrenamiento libre",
+                isCompleted = false,
+                kcalBurned = session.kcalBurned,
+                durationMinutes = session.durationMinutes?.toInt(),
+            )
+        }
+    }
+
+    /** Recalcula la duración y el gasto de una sesión ya cerrada tras corregirla. */
+    suspend fun recalculateSession(sessionId: Long, bodyWeightKg: Double?) = withContext(dispatcher) {
+        val session = q.selectSessionById(sessionId).executeAsOneOrNull() ?: return@withContext
+        if (session.isCompleted != 1L) return@withContext
+        val kcal = estimateSessionKcal(sessionId, bodyWeightKg)
+        q.completeSession(session.durationMinutes ?: 0L, kcal, session.notes, sessionId)
+    }
+
     suspend fun completeSession(
         sessionId: Long,
         durationMinutes: Int,

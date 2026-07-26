@@ -78,6 +78,7 @@ fun RoutineDetailScreen(
     val balance by viewModel.balance.collectAsState()
     var showAddDayDialog by remember { mutableStateOf(false) }
     var exerciseToEdit by remember { mutableStateOf<RoutineExerciseItem?>(null) }
+    var dayToEdit by remember { mutableStateOf<RoutineDayInfo?>(null) }
 
     // Al volver del selector de ejercicios hay que refrescar la rutina y su balance.
     LifecycleResumeEffect(routineId) {
@@ -157,6 +158,7 @@ fun RoutineDetailScreen(
                     DayCard(
                         day = day,
                         onAddExercise = { onAddExercise(day.id) },
+                        onEditDay = { dayToEdit = day },
                         onDeleteDay = { viewModel.deleteDay(day.id) },
                         onEditExercise = { exerciseToEdit = it },
                         onOpenExercise = { onOpenExercise(it.exerciseId) },
@@ -181,12 +183,29 @@ fun RoutineDetailScreen(
     }
 
     if (showAddDayDialog) {
-        AddDayDialog(
-            suggestedName = "Día ${(routine?.days?.size ?: 0) + 1}",
+        DayDialog(
+            title = "Nuevo día",
+            initialName = "Día ${(routine?.days?.size ?: 0) + 1}",
+            initialWeekday = null,
+            confirmLabel = "Añadir",
             onDismiss = { showAddDayDialog = false },
-            onAdd = { name, weekday ->
+            onConfirm = { name, weekday ->
                 showAddDayDialog = false
                 viewModel.addDay(name, weekday)
+            },
+        )
+    }
+
+    dayToEdit?.let { day ->
+        DayDialog(
+            title = "Editar día",
+            initialName = day.name,
+            initialWeekday = day.weekday,
+            confirmLabel = "Guardar",
+            onDismiss = { dayToEdit = null },
+            onConfirm = { name, weekday ->
+                viewModel.updateDay(day.id, name, weekday)
+                dayToEdit = null
             },
         )
     }
@@ -216,6 +235,7 @@ fun RoutineDetailScreen(
 private fun DayCard(
     day: RoutineDayInfo,
     onAddExercise: () -> Unit,
+    onEditDay: () -> Unit,
     onDeleteDay: () -> Unit,
     onEditExercise: (RoutineExerciseItem) -> Unit,
     onOpenExercise: (RoutineExerciseItem) -> Unit,
@@ -228,13 +248,15 @@ private fun DayCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(day.name, style = MaterialTheme.typography.titleMedium)
-                    day.weekday?.let { weekday ->
-                        Text(
-                            weekdayNamesEs.getOrElse(weekday - 1) { "" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        day.weekday?.let { weekdayNamesEs.getOrElse(it - 1) { "" } }
+                            ?: "Sin día asignado",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onEditDay) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Editar día")
                 }
                 IconButton(onClick = onDeleteDay) {
                     Icon(Icons.Filled.Close, contentDescription = "Borrar día")
@@ -341,18 +363,22 @@ private fun DayCard(
     }
 }
 
+/** Mismo diálogo para crear y para editar: solo cambian título, valores y botón. */
 @Composable
-private fun AddDayDialog(
-    suggestedName: String,
+private fun DayDialog(
+    title: String,
+    initialName: String,
+    initialWeekday: Int?,
+    confirmLabel: String,
     onDismiss: () -> Unit,
-    onAdd: (String, Int?) -> Unit,
+    onConfirm: (String, Int?) -> Unit,
 ) {
-    var name by remember { mutableStateOf(suggestedName) }
-    var weekday by remember { mutableStateOf<Int?>(null) }
+    var name by remember { mutableStateOf(initialName) }
+    var weekday by remember { mutableStateOf(initialWeekday) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nuevo día") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -363,6 +389,11 @@ private fun AddDayDialog(
                     singleLine = true,
                 )
                 Text("Día de la semana (opcional)", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Hace falta para que los recordatorios sepan cuándo avisarte.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     weekdayNamesEs.forEachIndexed { index, dayName ->
                         val value = index + 1
@@ -375,7 +406,7 @@ private fun AddDayDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onAdd(name, weekday) }) { Text("Añadir") } },
+        confirmButton = { TextButton(onClick = { onConfirm(name, weekday) }) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )
 }

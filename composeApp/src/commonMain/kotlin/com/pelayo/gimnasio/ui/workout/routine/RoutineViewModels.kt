@@ -39,6 +39,12 @@ class RoutineListViewModel(
         viewModelScope.launch { repository.deleteRoutine(id) }
     }
 
+    fun duplicateRoutine(id: Long, onDuplicated: (Long) -> Unit) {
+        viewModelScope.launch {
+            repository.duplicateRoutine(id)?.let(onDuplicated)
+        }
+    }
+
     fun setActive(id: Long) {
         viewModelScope.launch { repository.setActive(id) }
     }
@@ -82,6 +88,15 @@ class RoutineDetailViewModel(
     fun deleteDay(dayId: Long) {
         viewModelScope.launch {
             repository.deleteDay(dayId)
+            reload()
+        }
+    }
+
+    /** Renombra un día o le cambia el día de la semana, sin tocar sus ejercicios. */
+    fun updateDay(dayId: Long, name: String, weekday: Int?) {
+        viewModelScope.launch {
+            val day = _routine.value?.days?.firstOrNull { it.id == dayId } ?: return@launch
+            repository.updateDay(dayId, name.trim().ifBlank { day.name }, weekday, day.dayIndex)
             reload()
         }
     }

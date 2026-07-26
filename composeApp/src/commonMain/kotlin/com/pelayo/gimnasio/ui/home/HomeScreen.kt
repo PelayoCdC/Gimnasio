@@ -103,6 +103,43 @@ fun HomeScreen(
                 }
             }
 
+            // Va antes que la propuesta del día: si dejaste algo a medias, eso
+            // es lo primero que hay que resolver.
+            state.unfinished?.let { session ->
+                item {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        ),
+                    ) {
+                        Column(
+                            Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                "Tienes un entrenamiento sin terminar",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                            Text(
+                                "${session.dayName} · ${session.date}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onStartWorkout(session.sessionId) }) {
+                                    Text("Retomar")
+                                }
+                                OutlinedButton(onClick = viewModel::discardUnfinished) {
+                                    Text("Descartar")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 NextWorkoutCard(
                     routineName = state.routineName,

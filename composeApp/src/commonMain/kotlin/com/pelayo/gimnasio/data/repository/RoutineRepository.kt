@@ -203,6 +203,58 @@ class RoutineRepository(
         )
     }
 
+    /**
+     * Copia una rutina entera con sus días y ejercicios. La copia nace inactiva,
+     * para no desbancar a la que se esté siguiendo.
+     */
+    suspend fun duplicateRoutine(routineId: Long): Long? = withContext(dispatcher) {
+        db.transactionWithResult {
+            val original = q.selectRoutineById(routineId).executeAsOneOrNull()
+                ?: return@transactionWithResult null
+
+            q.insertRoutine(
+                name = nextCopyName(original.name),
+                description = original.description,
+                goal = original.goal,
+                createdAt = nowIsoString(),
+                isActive = 0,
+                isGenerated = original.isGenerated,
+            )
+            val newRoutineId = db.catalogQueries.lastInsertRowId().executeAsOne()
+
+            q.selectDaysForRoutine(routineId).executeAsList().forEach { day ->
+                q.insertRoutineDay(newRoutineId, day.dayIndex, day.name, day.weekday)
+                val newDayId = db.catalogQueries.lastInsertRowId().executeAsOne()
+
+                q.selectExercisesForDay(day.id).executeAsList().forEach { item ->
+                    q.insertRoutineExercise(
+                        routineDayId = newDayId,
+                        exerciseId = item.exerciseId,
+                        position = item.position,
+                        targetSets = item.targetSets,
+                        targetRepsMin = item.targetRepsMin,
+                        targetRepsMax = item.targetRepsMax,
+                        targetTimeSeconds = item.targetTimeSeconds,
+                        targetWeight = item.targetWeight,
+                        restSeconds = item.restSeconds,
+                        notes = item.notes,
+                    )
+                }
+            }
+            newRoutineId
+        }
+    }
+
+    /** "Torso" → "Torso (copia)", y si ya existe → "Torso (copia 2)". */
+    private fun nextCopyName(originalName: String): String {
+        val existing = q.selectAllRoutines().executeAsList().map { it.name }.toSet()
+        val base = "$originalName (copia)"
+        if (base !in existing) return base
+        var index = 2
+        while ("$originalName (copia $index)" in existing) index++
+        return "$originalName (copia $index)"
+    }
+
     /** Detalle de la rutina marcada como activa, si hay alguna. */
     suspend fun activeRoutineDetail(): RoutineDetail? = withContext(dispatcher) {
         val active = q.selectActiveRoutine().executeAsOneOrNull() ?: return@withContext null

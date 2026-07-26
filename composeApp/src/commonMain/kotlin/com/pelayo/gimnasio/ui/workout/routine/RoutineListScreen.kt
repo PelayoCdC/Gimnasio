@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -111,6 +112,7 @@ fun RoutineListScreen(
                         routine = routine,
                         onClick = { onRoutineClick(routine.id) },
                         onSetActive = { viewModel.setActive(routine.id) },
+                        onDuplicate = { viewModel.duplicateRoutine(routine.id, onRoutineClick) },
                         onDelete = { routineToDelete = routine },
                     )
                 }
@@ -151,6 +153,7 @@ private fun RoutineCard(
     routine: RoutineSummary,
     onClick: () -> Unit,
     onSetActive: () -> Unit,
+    onDuplicate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
@@ -163,6 +166,9 @@ private fun RoutineCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                IconButton(onClick = onDuplicate) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicar")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = "Borrar")

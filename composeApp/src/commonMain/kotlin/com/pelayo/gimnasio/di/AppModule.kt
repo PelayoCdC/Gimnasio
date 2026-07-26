@@ -62,7 +62,7 @@ val appModule = module {
         ExercisePickerViewModel(dayId, routineId, get(), get())
     }
     viewModel { (sessionId: Long) -> ActiveWorkoutViewModel(sessionId, get(), get(), get()) }
-    viewModel { (sessionId: Long) -> WorkoutSummaryViewModel(sessionId, get()) }
+    viewModel { (sessionId: Long) -> WorkoutSummaryViewModel(sessionId, get(), get()) }
     viewModel { CalendarViewModel(get()) }
     viewModel { ProfileViewModel(get()) }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
