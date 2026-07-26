@@ -47,6 +47,13 @@ class WorkoutSummaryViewModel(
         }
     }
 
+    fun saveNotes(notes: String) {
+        viewModelScope.launch {
+            repository.updateSessionNotes(sessionId, notes)
+            reload()
+        }
+    }
+
     fun deleteSession() {
         viewModelScope.launch {
             repository.deleteSession(sessionId)

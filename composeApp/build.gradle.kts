@@ -26,6 +26,11 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            // Los atajos compose.* están deprecados a favor de declarar
+            // androidx.compose.* directamente, pero esos artefactos no publican
+            // targets de Apple y cambiarlos rompe la resolución de iOS
+            // (probado). Hay que seguir con los de JetBrains hasta que AndroidX
+            // los publique; los avisos de deprecación son el precio.
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)

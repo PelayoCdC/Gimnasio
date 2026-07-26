@@ -53,6 +53,9 @@ SELECT * FROM WorkoutSession WHERE isCompleted = 1 ORDER BY date DESC, id DESC L
 countCompletedSessions:
 SELECT COUNT(*) FROM WorkoutSession WHERE isCompleted = 1;
 
+updateSessionNotes:
+UPDATE WorkoutSession SET notes = ? WHERE id = ?;
+
 selectUnfinishedSessions:
 SELECT * FROM WorkoutSession WHERE isCompleted = 0 ORDER BY date DESC, id DESC;
 

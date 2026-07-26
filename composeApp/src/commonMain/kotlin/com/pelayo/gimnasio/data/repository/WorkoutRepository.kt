@@ -94,6 +94,19 @@ class WorkoutRepository(
         )
     }
 
+    /**
+     * Solo las series registradas en la sesión, agrupadas por ejercicio.
+     *
+     * Es lo único que cambia mientras entrenas: el prerrelleno y la sugerencia
+     * de subir peso dependen de sesiones *anteriores*, así que recargarlos con
+     * cada serie apuntada disparaba una veintena de consultas para nada.
+     */
+    suspend fun loggedSetsBySession(sessionId: Long): Map<Long, List<SetLogItem>> =
+        withContext(dispatcher) {
+            q.selectSetsForSession(sessionId).executeAsList()
+                .groupBy({ it.exerciseId }, { it.toItem() })
+        }
+
     suspend fun logSet(
         sessionId: Long,
         exerciseId: Long,
@@ -119,6 +132,10 @@ class WorkoutRepository(
     }
 
     suspend fun deleteSet(setId: Long) = withContext(dispatcher) { q.deleteSetLog(setId) }
+
+    suspend fun updateSessionNotes(sessionId: Long, notes: String?) = withContext(dispatcher) {
+        q.updateSessionNotes(notes?.takeIf { it.isNotBlank() }, sessionId)
+    }
 
     /** Corrige una serie ya registrada, también en sesiones ya terminadas. */
     suspend fun updateSet(
@@ -246,6 +263,7 @@ class WorkoutRepository(
             totalVolume = byExercise.sumOf { it.volume },
             exercises = byExercise,
             muscleGroupsWorked = muscleGroups,
+            notes = session.notes,
             volumeByMuscleGroup = volumeByGroup,
         )
     }

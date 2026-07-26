@@ -51,8 +51,26 @@ class ActiveWorkoutViewModel(
         reload()
     }
 
+    /** Carga completa: plan del día, prerrelleno e historial de progresión. */
     fun reload() {
         viewModelScope.launch { _workout.value = repository.activeWorkout(sessionId) }
+    }
+
+    /**
+     * Refresco barato tras apuntar o borrar una serie: solo vuelve a leer las
+     * series de la sesión y las mete en el estado que ya teníamos. Evita
+     * recalcular prerrelleno y progresión, que no cambian mientras entrenas.
+     */
+    private fun refreshLoggedSets() {
+        viewModelScope.launch {
+            val current = _workout.value ?: return@launch
+            val logged = repository.loggedSetsBySession(sessionId)
+            _workout.value = current.copy(
+                exercises = current.exercises.map { exercise ->
+                    exercise.copy(loggedSets = logged[exercise.exerciseId].orEmpty())
+                },
+            )
+        }
     }
 
     fun logSet(
@@ -66,7 +84,7 @@ class ActiveWorkoutViewModel(
     ) {
         viewModelScope.launch {
             repository.logSet(sessionId, exerciseId, setNumber, weightKg, reps, timeSeconds)
-            reload()
+            refreshLoggedSets()
             if (restSeconds > 0) startRest(restSeconds, exerciseName)
         }
     }
@@ -74,7 +92,7 @@ class ActiveWorkoutViewModel(
     fun deleteSet(setId: Long) {
         viewModelScope.launch {
             repository.deleteSet(setId)
-            reload()
+            refreshLoggedSets()
         }
     }
 

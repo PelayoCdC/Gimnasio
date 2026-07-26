@@ -63,6 +63,8 @@ data class WorkoutSummary(
     val totalVolume: Double,
     val exercises: List<SessionExerciseSummary>,
     val muscleGroupsWorked: List<String>,
+    /** Cómo fue el día: sueño, molestias, cambios de agarre… */
+    val notes: String? = null,
     /** Series efectivas por grupo muscular en esta sesión, para el mapa muscular. */
     val volumeByMuscleGroup: Map<Long, Double> = emptyMap(),
 )

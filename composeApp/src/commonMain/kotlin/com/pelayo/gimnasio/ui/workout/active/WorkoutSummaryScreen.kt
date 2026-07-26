@@ -167,6 +167,13 @@ fun WorkoutSummaryScreen(
             }
 
             item {
+                NotesCard(
+                    notes = current.notes,
+                    onSave = viewModel::saveNotes,
+                )
+            }
+
+            item {
                 Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Hecho") }
             }
         }
@@ -207,6 +214,37 @@ fun WorkoutSummaryScreen(
                 TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") }
             },
         )
+    }
+}
+
+/**
+ * Notas del día. Se guardan al perder el foco o al pulsar el botón, para no
+ * escribir en la base de datos en cada tecla.
+ */
+@Composable
+private fun NotesCard(notes: String?, onSave: (String) -> Unit) {
+    var text by remember(notes) { mutableStateOf(notes.orEmpty()) }
+    val changed = text != notes.orEmpty()
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Notas del día", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Cómo dormiste, molestias, cambios de agarre… lo que luego explique un bajón.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Sin notas") },
+                minLines = 2,
+            )
+            if (changed) {
+                TextButton(onClick = { onSave(text) }) { Text("Guardar notas") }
+            }
+        }
     }
 }
 

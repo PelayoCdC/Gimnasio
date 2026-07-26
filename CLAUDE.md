@@ -69,6 +69,9 @@ Tres cosas que hay que respetar al añadir uno:
   aporta la `ComponentActivity` vacía y su manifiesto tiene que fusionarse.
 - Usa `assertExists()` en vez de `assertIsDisplayed()` para lo que pueda caer por
   debajo del alto de la ventana de test; si no, fallan cosas que sí se renderizan.
+- En pantallas con `LazyColumn`, lo que queda por debajo **ni se compone**, así
+  que `assertExists()` tampoco lo encuentra: hay que desplazarse antes con
+  `onNode(hasScrollAction()).performScrollToNode(...)`.
 
 Para probar una pantalla con su ViewModel hay que llamar a
 `Dispatchers.setMain(Dispatchers.Unconfined)`, porque `viewModelScope` despacha en
@@ -149,12 +152,21 @@ con domingo = 1 y el modelo usa ISO (lunes = 1), así que hay una conversión en
 minSdk 26 todos los dispositivos lo soportan. El dibujo cabe en el círculo seguro
 de 72 del lienzo de 108.
 
-**Las dependencias de lifecycle y navegación tienen que ser las de
-`org.jetbrains.androidx`, no las de `androidx` a secas.** Las de AndroidX no
-publican targets de Apple todavía; las de JetBrains los añaden y delegan en
-ellas. Cambiarlas a `androidx.*` rompe la resolución de iOS (probado). El precio
-son los avisos de "same unique_name" del resolvedor de klibs, que por ahora son
-esperables y no rompen nada.
+**Las dependencias de Compose, lifecycle y navegación tienen que ser las de
+JetBrains** (`compose.*` y `org.jetbrains.androidx.*`), no las de `androidx` a
+secas. Las de AndroidX no publican targets de Apple todavía; las de JetBrains los
+añaden y delegan en ellas. Cambiarlas rompe la resolución de iOS: probado tanto
+con lifecycle/navegación como con `androidx.compose.runtime/foundation/ui/
+material3`. El precio son los avisos de deprecación ("Specify dependency
+directly") y los de "same unique_name" del resolvedor de klibs; ambos son
+esperables y no rompen nada. Hay que esperar a que AndroidX publique Apple.
+
+**El entrenamiento en curso se refresca en dos niveles.** `reload()` recarga todo
+(plan, prerrelleno e historial de progresión) y solo se llama al abrir la
+pantalla; al apuntar o borrar una serie se usa `refreshLoggedSets()`, que solo
+relee las series de la sesión. Recargar entero en cada serie disparaba una
+veintena de consultas para recalcular cosas que dependen de sesiones anteriores y
+no cambian mientras entrenas.
 
 ## Estado
 
