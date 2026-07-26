@@ -19,9 +19,12 @@ busca un ejercicio o un alimento nuevo.
   los secundarios) y avisa si falta un grupo, si va escaso o si hay
   descompensación entre empuje y tirón o entre tren superior y piernas.
 - **Generador automático** de rutinas equilibradas según los días que entrenes,
-  tu objetivo y el material del que dispongas.
+  tu objetivo y el material del que dispongas. Las rutinas se pueden duplicar
+  para ajustarlas sin perder la anterior.
 - Registro de series con peso y repeticiones, o con tiempo. Prerrellena lo que
-  hiciste la vez anterior.
+  hiciste la vez anterior, y lo apuntado se puede corregir después: un peso mal
+  tecleado no se queda envenenando las gráficas para siempre.
+- Notas por sesión, para dejar constancia de lo que luego explica un bajón.
 - **Cronómetro de descanso** que avisa con notificación y vibración aunque salgas
   de la app o el sistema la cierre, porque el aviso lo programa Android.
 - **Progresión automática**: si completas el rango objetivo dos sesiones
@@ -85,7 +88,7 @@ todavía no hay proyecto de Xcode.
 ./gradlew :composeApp:testDebugUnitTest
 ```
 
-Casi 200 tests. Los de repositorio corren contra SQLite de verdad, no contra
+Más de 220 tests. Los de repositorio corren contra SQLite de verdad, no contra
 imitaciones, y los de interfaz con Robolectric, sin necesidad de emulador. Hay
 además una red de seguridad que rompe el build si el esquema de la base de datos
 cambia sin su migración correspondiente, para que una actualización no deje la
