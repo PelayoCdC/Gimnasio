@@ -85,6 +85,12 @@ correspondiente, borra la instantánea y vuelve a ejecutar los tests, que la
 regeneran. Sin esto, la app instalada se rompería al actualizar, porque SQLDelight
 solo migra si la versión del esquema sube (y sube con cada `.sqm`).
 
+`schema-v1.sql` es otra cosa y **no se regenera nunca**: es el esquema de la
+primera versión publicada, el punto de partida de la cadena de migraciones. Los
+tests levantan esa base de datos, aplican todos los `.sqm` y comprueban que sale
+el esquema de hoy con los datos intactos. La instantánea se mueve con cada
+cambio; la base congelada no.
+
 **El backup tiene su propia versión** (`BackupData.CURRENT_VERSION`), aparte de la
 del esquema. Si añades una entidad nueva del usuario, acuérdate de exportarla:
 `deleteAllUserData` la borrará al restaurar aunque el JSON no la traiga. Pasó con
@@ -186,6 +192,48 @@ las sube al avanzado, así que `saveGenerated` guarda la prescripción de la
 propuesta y no vuelve a llamar a `forGoal(goal)`. Si se añade otro camino que
 persista rutinas generadas, hay que pasarle la prescripción o el ajuste de nivel
 se pierde al guardar.
+
+**La silueta del mapa muscular son rutas SVG, no rectángulos.** `BodyShapes`
+guarda el cuerpo y cada zona muscular como cadenas `d` de SVG sobre un lienzo de
+100x200, y las lee con un intérprete propio que solo entiende `M`, `L`, `C` y `Z`
+absolutos. Se hizo así porque transcribir veinticinco curvas a llamadas de `Path`
+a mano era pedir una errata; si añades una forma, escríbela en SVG y respeta ese
+subconjunto. `MuscleMap` pinta primero la silueta entera en gris (al 60 % del
+color vacío) y encima las zonas, así que lo que no es ningún grupo —cabeza,
+cuello, antebrazos, manos, rodillas y pies— hace de relleno y el cuerpo se
+entiende aunque no se entrene nada.
+
+Para verlo sin emulador: monta las mismas rutas en un `.html` con `<svg>` y
+sácale una captura con `msedge.exe --headless --disable-gpu --screenshot`, que es
+el único navegador instalado en el equipo. `BodyShapesTest` cubre lo que la vista
+no puede: que las zonas caigan dentro del cuerpo, que estén ordenadas de arriba
+abajo y que las pares queden centradas en el eje.
+
+**La búsqueda del catálogo va contra `Exercise.searchName`, no contra `nameEs`.**
+Esa columna guarda el nombre en español y en inglés en minúsculas y sin tildes,
+porque el `LIKE` de SQLite solo ignora mayúsculas en ASCII y no sabe nada de
+acentos. La calcula `normalizeForSearch` en Kotlin al guardar el ejercicio, así
+que **todo camino que inserte ejercicios tiene que rellenarla**: la sincronización
+con wger, los ejercicios propios y la restauración del backup. Las bases de datos
+anteriores a la columna la traen a NULL y `DatabaseSeeder.fillMissingSearchNames`
+la completa al arrancar; la migración no puede hacerlo porque quitar tildes en SQL
+no es posible.
+
+La consulta exige cada palabra por separado (`searchTerms` parte la consulta), de
+modo que "press inclinado" encuentra "Press de banca inclinado". Son **cuatro
+términos como máximo** porque cada uno ocupa un hueco fijo en el `.sq`; el resto
+se ignoran.
+
+**Las sugerencias son el aviso de balance ya resuelto.** `RoutineAdvisor` toma el
+`BalanceReport`, los ejercicios de la rutina y el catálogo, y devuelve altas
+("añade X al día Y") y cambios ("cambia X por Y"). Nunca propone un ejercicio que
+ya esté en la rutina, nunca sacrifica un compuesto al sugerir un cambio y no da
+dos consejos del mismo grupo. Se recalculan en cada `reload()`, así que lo que se
+descarte con "Ahora no" vuelve al reabrir la pantalla.
+
+**Al copiar un día a otra rutina el día de la semana solo viaja si está libre**
+en el destino (`copyDayToRoutine`): dos días el mismo martes harían que el
+recordatorio avisara dos veces. El nombre solo se desambigua si choca.
 
 **El entrenamiento en curso se refresca en dos niveles.** `reload()` recarga todo
 (plan, prerrelleno e historial de progresión) y solo se llama al abrir la

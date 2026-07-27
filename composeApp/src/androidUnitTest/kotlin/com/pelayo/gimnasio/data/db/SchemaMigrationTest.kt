@@ -27,7 +27,26 @@ class SchemaMigrationTest {
 
     private val snapshotFile = File("src/androidUnitTest/resources/schema-snapshot.sql")
 
+    /**
+     * El esquema de la primera versión publicada, congelado. No se regenera nunca:
+     * es la base de datos que tiene instalada quien lleva la app desde el principio,
+     * y el punto de partida de la cadena de migraciones.
+     */
+    private val baselineFile = File("src/androidUnitTest/resources/schema-v1.sql")
+
     private fun emptyDriver() = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+
+    /** Levanta una base de datos con el esquema de la versión 1. */
+    private fun v1Driver(): JdbcSqliteDriver {
+        val driver = emptyDriver()
+        // Cada sentencia ocupa una línea; sqlite_master las guarda sin punto y
+        // coma final. El fichero va ordenado alfabéticamente, así que hay que
+        // crear las tablas antes que los índices que las referencian.
+        val statements = baselineFile.readText().lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val (indexes, tables) = statements.partition { it.startsWith("CREATE INDEX", ignoreCase = true) }
+        (tables + indexes).forEach { driver.execute(null, it, 0) }
+        return driver
+    }
 
     /** Esquema tal y como lo crea SQLDelight hoy a partir de los `.sq`. */
     private fun currentSchema(): String {
@@ -60,20 +79,8 @@ class SchemaMigrationTest {
     }
 
     @Test
-    fun migrar_desde_la_instantanea_reproduce_el_esquema_actual() {
-        if (!snapshotFile.exists()) return // el otro test ya avisa
-
-        // Base de datos "vieja": la instantánea tal cual estaba. Cada sentencia
-        // ocupa una línea; sqlite_master las guarda sin punto y coma final. La
-        // instantánea va ordenada alfabéticamente, así que hay que crear las
-        // tablas antes que los índices que las referencian.
-        val driver = emptyDriver()
-        val statements = snapshotFile.readText()
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        val (indexes, tables) = statements.partition { it.startsWith("CREATE INDEX", ignoreCase = true) }
-        (tables + indexes).forEach { driver.execute(null, it, 0) }
+    fun migrar_desde_la_primera_version_reproduce_el_esquema_actual() {
+        val driver = v1Driver()
 
         // Se aplican todas las migraciones que haya desde la versión 1.
         GimnasioDb.Schema.migrate(driver, 1, GimnasioDb.Schema.version)
@@ -102,8 +109,9 @@ class SchemaMigrationTest {
 
     @Test
     fun los_datos_del_usuario_sobreviven_a_la_migracion() {
-        val driver = emptyDriver()
-        GimnasioDb.Schema.create(driver)
+        // Se parte de la versión 1 con datos dentro, que es la situación real de
+        // quien actualiza la app con su histórico ya metido.
+        val driver = v1Driver()
         driver.execute(null, "PRAGMA foreign_keys=ON", 0)
         val db = GimnasioDb(driver)
 

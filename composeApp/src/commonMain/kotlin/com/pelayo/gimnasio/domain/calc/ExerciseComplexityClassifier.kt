@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.domain.calc
 
 import com.pelayo.gimnasio.domain.model.ExerciseComplexity
+import com.pelayo.gimnasio.util.normalizeForSearch
 
 /**
  * Estima lo exigente que es un ejercicio en técnica y, sobre todo, lo fácil que
@@ -62,29 +63,12 @@ object ExerciseComplexityClassifier {
     )
 
     fun classify(name: String, equipmentIds: Set<Long>): ExerciseComplexity {
-        val normalized = normalize(name)
+        val normalized = normalizeForSearch(name)
 
         if (advancedKeywords.any { it in normalized }) return ExerciseComplexity.AVANZADO
         if (equipmentIds.any { it in technicalEquipment }) return ExerciseComplexity.INTERMEDIO
         if (intermediateKeywords.any { it in normalized }) return ExerciseComplexity.INTERMEDIO
 
         return ExerciseComplexity.BASICO
-    }
-
-    /** Minúsculas y sin tildes, para que el nombre traducido de wger cuadre con las claves. */
-    private fun normalize(name: String): String = buildString(name.length) {
-        for (char in name.lowercase()) {
-            append(
-                when (char) {
-                    'á', 'à', 'ä', 'â' -> 'a'
-                    'é', 'è', 'ë', 'ê' -> 'e'
-                    'í', 'ì', 'ï', 'î' -> 'i'
-                    'ó', 'ò', 'ö', 'ô' -> 'o'
-                    'ú', 'ù', 'ü', 'û' -> 'u'
-                    'ñ' -> 'n'
-                    else -> char
-                },
-            )
-        }
     }
 }

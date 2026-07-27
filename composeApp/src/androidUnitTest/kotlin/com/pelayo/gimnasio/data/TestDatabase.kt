@@ -39,6 +39,7 @@ fun GimnasioDb.insertTestExercise(
         metValue = metValue,
         exerciseType = exerciseType,
         wgerId = wgerId,
+        searchName = DatabaseSeeder.searchNameFor(name, null),
     )
     val id = catalogQueries.selectExerciseIdByWgerId(wgerId).executeAsOne()
     primaryMuscleIds.forEach { catalogQueries.insertExerciseMuscle(id, it, "PRIMARY") }

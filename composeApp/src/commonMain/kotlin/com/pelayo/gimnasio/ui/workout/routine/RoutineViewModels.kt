@@ -6,6 +6,11 @@ import com.pelayo.gimnasio.data.repository.ExerciseRepository
 import com.pelayo.gimnasio.data.repository.RoutineRepository
 import com.pelayo.gimnasio.data.repository.WorkoutRepository
 import com.pelayo.gimnasio.domain.calc.BalanceReport
+import com.pelayo.gimnasio.domain.calc.CandidateExercise
+import com.pelayo.gimnasio.domain.calc.RoutineAdvisor
+import com.pelayo.gimnasio.domain.calc.RoutineExerciseRef
+import com.pelayo.gimnasio.domain.calc.RoutineSuggestion
+import com.pelayo.gimnasio.domain.model.ExerciseDetail
 import com.pelayo.gimnasio.domain.model.ExerciseListItem
 import com.pelayo.gimnasio.domain.model.RoutineDetail
 import com.pelayo.gimnasio.domain.model.RoutineGoal
@@ -18,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -54,6 +60,7 @@ class RoutineDetailViewModel(
     private val routineId: Long,
     private val repository: RoutineRepository,
     private val workoutRepository: WorkoutRepository,
+    private val exerciseRepository: ExerciseRepository,
 ) : ViewModel() {
 
     /** Abre (o retoma) la sesión de entrenamiento de un día y devuelve su id. */
@@ -67,14 +74,74 @@ class RoutineDetailViewModel(
     private val _balance = MutableStateFlow<BalanceReport?>(null)
     val balance: StateFlow<BalanceReport?> = _balance
 
+    private val _suggestions = MutableStateFlow<List<RoutineSuggestion>>(emptyList())
+    val suggestions: StateFlow<List<RoutineSuggestion>> = _suggestions
+
+    /** El resto de rutinas, para poder copiarles un día. */
+    val otherRoutines: StateFlow<List<RoutineSummary>> = repository.routines()
+        .map { list -> list.filter { it.id != routineId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** El catálogo solo hace falta para sugerir, y no cambia mientras se edita. */
+    private var catalog: List<CandidateExercise> = emptyList()
+
     init {
         reload()
     }
 
     fun reload() {
         viewModelScope.launch {
-            _routine.value = repository.routineDetail(routineId)
-            _balance.value = repository.balanceReport(routineId)
+            val detail = repository.routineDetail(routineId)
+            val report = repository.balanceReport(routineId)
+            _routine.value = detail
+            _balance.value = report
+
+            if (catalog.isEmpty()) catalog = exerciseRepository.candidates()
+            _suggestions.value = if (detail == null || report == null) {
+                emptyList()
+            } else {
+                RoutineAdvisor.suggest(
+                    report = report,
+                    routineExercises = detail.days.flatMap { day ->
+                        day.exercises.map { item ->
+                            RoutineExerciseRef(
+                                routineExerciseId = item.id,
+                                exerciseId = item.exerciseId,
+                                name = item.exerciseName,
+                                dayId = day.id,
+                                dayName = day.name,
+                            )
+                        }
+                    },
+                    catalog = catalog,
+                )
+            }
+        }
+    }
+
+    /** Aplica una sugerencia: añade el ejercicio propuesto o sustituye el que sobra. */
+    fun applySuggestion(suggestion: RoutineSuggestion) {
+        viewModelScope.launch {
+            val goal = _routine.value?.goal ?: RoutineGoal.HIPERTROFIA
+            val replaces = suggestion.replacesRoutineExerciseId
+            if (replaces == null) {
+                repository.addExerciseToDay(suggestion.dayId, suggestion.exerciseId, goal)
+            } else {
+                repository.replaceRoutineExercise(replaces, suggestion.exerciseId, goal)
+            }
+            reload()
+        }
+    }
+
+    /** Descarta una sugerencia hasta la próxima recarga, sin tocar la rutina. */
+    fun dismissSuggestion(suggestion: RoutineSuggestion) {
+        _suggestions.value = _suggestions.value - suggestion
+    }
+
+    fun copyDayTo(dayId: Long, targetRoutineId: Long, onCopied: () -> Unit) {
+        viewModelScope.launch {
+            repository.copyDayToRoutine(dayId, targetRoutineId)
+            onCopied()
         }
     }
 
@@ -178,6 +245,25 @@ class ExercisePickerViewModel(
 
     fun setMuscleGroup(id: Long?) {
         muscleGroupFilter.value = if (muscleGroupFilter.value == id) null else id
+    }
+
+    /** Ficha del ejercicio que se está mirando antes de decidir si se añade. */
+    private val _preview = MutableStateFlow<ExerciseDetail?>(null)
+    val preview: StateFlow<ExerciseDetail?> = _preview
+
+    private val _loadingPreview = MutableStateFlow(false)
+    val loadingPreview: StateFlow<Boolean> = _loadingPreview
+
+    fun showPreview(exerciseId: Long) {
+        viewModelScope.launch {
+            _loadingPreview.value = true
+            _preview.value = exerciseRepository.exerciseDetail(exerciseId)
+            _loadingPreview.value = false
+        }
+    }
+
+    fun hidePreview() {
+        _preview.value = null
     }
 
     fun addExercise(exerciseId: Long, onDone: () -> Unit) {

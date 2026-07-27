@@ -29,7 +29,11 @@ CREATE TABLE Exercise (
     videoUrl TEXT,
     metValue REAL NOT NULL DEFAULT 3.5,
     exerciseType TEXT NOT NULL DEFAULT 'REPS', -- 'REPS' | 'TIME'
-    isCustom INTEGER NOT NULL DEFAULT 0
+    isCustom INTEGER NOT NULL DEFAULT 0,
+    -- Nombre en español e inglés en minúsculas y sin tildes, que es contra lo que
+    -- busca searchExercises. SQLite no sabe quitar acentos, así que se calcula en
+    -- Kotlin al guardar (normalizeForSearch).
+    searchName TEXT
 );
 
 CREATE TABLE ExerciseMuscle (
@@ -81,16 +85,23 @@ upsertExerciseByWgerId {
     UPDATE Exercise
     SET nameEs = :nameEs, nameEn = :nameEn, descriptionEs = :descriptionEs,
         categoryId = :categoryId, videoUrl = :videoUrl, metValue = :metValue,
-        exerciseType = :exerciseType
+        exerciseType = :exerciseType, searchName = :searchName
     WHERE wgerId = :wgerId;
 
-    INSERT OR IGNORE INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom)
-    VALUES (:wgerId, :nameEs, :nameEn, :descriptionEs, :categoryId, :videoUrl, :metValue, :exerciseType, 0);
+    INSERT OR IGNORE INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom, searchName)
+    VALUES (:wgerId, :nameEs, :nameEn, :descriptionEs, :categoryId, :videoUrl, :metValue, :exerciseType, 0, :searchName);
 }
 
 insertCustomExercise:
-INSERT INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom)
-VALUES (NULL, ?, NULL, ?, NULL, NULL, ?, ?, 1);
+INSERT INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom, searchName)
+VALUES (NULL, ?, NULL, ?, NULL, NULL, ?, ?, 1, ?);
+
+-- Para rellenar searchName en las bases de datos que vienen de antes de tenerlo.
+selectExercisesWithoutSearchName:
+SELECT id, nameEs, nameEn FROM Exercise WHERE searchName IS NULL;
+
+updateSearchName:
+UPDATE Exercise SET searchName = ? WHERE id = ?;
 
 lastInsertRowId:
 SELECT last_insert_rowid();
@@ -130,7 +141,12 @@ LEFT JOIN ExerciseEquipment ee ON ee.exerciseId = e.id
 LEFT JOIN ExerciseImage img ON img.id = (
     SELECT i.id FROM ExerciseImage i WHERE i.exerciseId = e.id ORDER BY i.isMain DESC, i.id LIMIT 1
 )
-WHERE (:query = '' OR e.nameEs LIKE '%' || :query || '%' OR e.nameEn LIKE '%' || :query || '%')
+-- Cada término se exige por separado (y en cualquier orden dentro del nombre),
+-- no la frase entera y adyacente. Los que sobran llegan como NULL.
+WHERE (:term1 IS NULL OR COALESCE(e.searchName, e.nameEs) LIKE '%' || :term1 || '%')
+  AND (:term2 IS NULL OR COALESCE(e.searchName, e.nameEs) LIKE '%' || :term2 || '%')
+  AND (:term3 IS NULL OR COALESCE(e.searchName, e.nameEs) LIKE '%' || :term3 || '%')
+  AND (:term4 IS NULL OR COALESCE(e.searchName, e.nameEs) LIKE '%' || :term4 || '%')
   AND (:muscleGroupId IS NULL OR (m.muscleGroupId = :muscleGroupId AND em.role = 'PRIMARY'))
   AND (:equipmentId IS NULL OR ee.equipmentId = :equipmentId)
 ORDER BY e.nameEs

@@ -1,0 +1,4 @@
+-- Nombre normalizado (minúsculas, sin tildes) contra el que busca el catálogo.
+-- Se deja a NULL: SQLite no sabe quitar acentos, así que lo rellena DatabaseSeeder
+-- en Kotlin la primera vez que se abre la app actualizada.
+ALTER TABLE Exercise ADD COLUMN searchName TEXT;

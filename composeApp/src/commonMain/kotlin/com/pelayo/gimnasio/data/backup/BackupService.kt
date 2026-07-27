@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.data.backup
 
+import com.pelayo.gimnasio.data.db.DatabaseSeeder
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.util.nowIsoString
 import kotlinx.coroutines.CoroutineDispatcher
@@ -260,6 +261,7 @@ class BackupService(
                 backup.customExercises.forEach { exercise ->
                     db.catalogQueries.insertCustomExercise(
                         exercise.nameEs, exercise.descriptionEs, exercise.metValue, exercise.exerciseType,
+                        DatabaseSeeder.searchNameFor(exercise.nameEs, null),
                     )
                     val id = db.catalogQueries.lastInsertRowId().executeAsOne()
                     exercise.primaryMuscleIds.forEach {

@@ -57,7 +57,7 @@ val appModule = module {
     viewModel { (exerciseId: Long) -> ExerciseDetailViewModel(exerciseId, get(), get()) }
     viewModel { RoutineListViewModel(get()) }
     viewModel { RoutineGeneratorViewModel(get(), get()) }
-    viewModel { (routineId: Long) -> RoutineDetailViewModel(routineId, get(), get()) }
+    viewModel { (routineId: Long) -> RoutineDetailViewModel(routineId, get(), get(), get()) }
     viewModel { (dayId: Long, routineId: Long) ->
         ExercisePickerViewModel(dayId, routineId, get(), get())
     }

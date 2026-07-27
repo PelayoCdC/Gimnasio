@@ -82,6 +82,13 @@ UPDATE RoutineExercise
 SET targetSets = ?, targetRepsMin = ?, targetRepsMax = ?, targetTimeSeconds = ?, targetWeight = ?, restSeconds = ?, notes = ?, position = ?
 WHERE id = ?;
 
+-- Cambia el ejercicio dejando la posición intacta: es lo que hace falta para
+-- sustituir un ejercicio por otro sin que se mueva de sitio dentro del día.
+swapRoutineExercise:
+UPDATE RoutineExercise
+SET exerciseId = ?, targetRepsMin = ?, targetRepsMax = ?, targetTimeSeconds = ?, targetWeight = NULL
+WHERE id = ?;
+
 deleteRoutineExercise:
 DELETE FROM RoutineExercise WHERE id = ?;
 

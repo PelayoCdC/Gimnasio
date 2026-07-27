@@ -12,6 +12,7 @@ import com.pelayo.gimnasio.domain.model.MuscleGroupInfo
 import com.pelayo.gimnasio.domain.model.MuscleGroups
 import com.pelayo.gimnasio.domain.model.MuscleRole
 import com.pelayo.gimnasio.domain.model.MuscleWithRole
+import com.pelayo.gimnasio.util.searchTerms
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -27,14 +28,22 @@ class ExerciseRepository(
     fun exerciseCount(): Flow<Long> =
         db.catalogQueries.countExercises().asFlow().map { it.executeAsOne() }
 
+    /**
+     * Busca por palabras sueltas: todas tienen que aparecer en el nombre, en
+     * cualquier orden y sin importar mayúsculas ni tildes.
+     */
     fun searchExercises(
         query: String,
         muscleGroupId: Long?,
         equipmentId: Long?,
         limit: Long = 200,
-    ): Flow<List<ExerciseListItem>> =
-        db.catalogQueries.searchExercises(
-            query = query.trim(),
+    ): Flow<List<ExerciseListItem>> {
+        val terms = searchTerms(query)
+        return db.catalogQueries.searchExercises(
+            term1 = terms.getOrNull(0),
+            term2 = terms.getOrNull(1),
+            term3 = terms.getOrNull(2),
+            term4 = terms.getOrNull(3),
             muscleGroupId = muscleGroupId,
             equipmentId = equipmentId,
             limit = limit,
@@ -50,6 +59,7 @@ class ExerciseRepository(
                 )
             }
         }
+    }
 
     fun muscleGroups(): List<MuscleGroupInfo> = MuscleGroups.all
 

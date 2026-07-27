@@ -13,11 +13,20 @@ busca un ejercicio o un alimento nuevo.
 **Entrenamiento**
 
 - Catálogo de ~830 ejercicios con imágenes, instrucciones en español y músculos
-  implicados, descargado de [wger](https://wger.de) y guardado en local.
+  implicados, descargado de [wger](https://wger.de) y guardado en local. La
+  búsqueda va por palabras sueltas y sin importar mayúsculas ni tildes: "press
+  inclinado" encuentra "Press de banca inclinado", y "elevacion" encuentra
+  "Elevación lateral". Desde el buscador se puede abrir la ficha del ejercicio
+  —fotos, músculos, material e instrucciones— antes de añadirlo a la rutina.
 - Rutinas por días con **análisis de equilibrio muscular**: calcula las series
   efectivas por grupo a la semana (los músculos primarios cuentan el doble que
   los secundarios) y avisa si falta un grupo, si va escaso o si hay
-  descompensación entre empuje y tirón o entre tren superior y piernas.
+  descompensación entre empuje y tirón o entre tren superior y piernas. Además
+  del aviso propone **qué ejercicio añadir y en qué día**, o **qué cambiar por
+  qué** cuando a un grupo le sobra volumen y a otro le falta, y lo aplica de un
+  toque.
+- Los días se pueden **copiar a otra rutina** con sus ejercicios, series y
+  descansos, para reaprovechar un día bien montado sin rehacerlo.
 - **Generador automático** de rutinas equilibradas según los días que entrenes,
   el tiempo que tengas por sesión, tu nivel, tu objetivo y el material del que
   dispongas. El tiempo decide cuántos ejercicios caben —recortando antes el
@@ -33,7 +42,9 @@ busca un ejercicio o un alimento nuevo.
   de la app o el sistema la cierre, porque el aviso lo programa Android.
 - **Progresión automática**: si completas el rango objetivo dos sesiones
   seguidas, propone subir el peso.
-- Calendario mensual, mapa muscular, gráficas de progreso por ejercicio, rachas
+- Calendario mensual, mapa muscular sobre una silueta humana (de frente y de
+  espalda, con cada zona teñida según su volumen semanal), gráficas de progreso
+  por ejercicio, rachas
   por semanas y logros.
 
 **Nutrición**

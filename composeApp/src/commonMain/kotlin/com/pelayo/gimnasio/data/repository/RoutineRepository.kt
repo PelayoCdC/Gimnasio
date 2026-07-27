@@ -130,6 +130,32 @@ class RoutineRepository(
         )
     }
 
+    /**
+     * Sustituye el ejercicio de una fila de rutina por otro, conservando su
+     * posición, sus series y su descanso. Las repeticiones se rehacen desde el
+     * objetivo porque el ejercicio nuevo puede ser de tiempo y el viejo de
+     * repeticiones (o al revés), y entonces los objetivos no encajarían.
+     */
+    suspend fun replaceRoutineExercise(
+        routineExerciseId: Long,
+        newExerciseId: Long,
+        goal: RoutineGoal,
+    ) = withContext(dispatcher) {
+        db.transaction {
+            val exercise = db.catalogQueries.selectExerciseById(newExerciseId).executeAsOneOrNull()
+                ?: return@transaction
+            val p = TrainingPrescription.forGoal(goal)
+            val isTimed = exercise.exerciseType == ExerciseType.TIME.name
+            q.swapRoutineExercise(
+                exerciseId = newExerciseId,
+                targetRepsMin = if (isTimed) null else p.repsMin.toLong(),
+                targetRepsMax = if (isTimed) null else p.repsMax.toLong(),
+                targetTimeSeconds = if (isTimed) 60L else null,
+                id = routineExerciseId,
+            )
+        }
+    }
+
     suspend fun removeRoutineExercise(id: Long) = withContext(dispatcher) {
         db.transaction {
             val dayId = q.selectRoutineDayIdForExercise(id).executeAsOneOrNull()
@@ -246,6 +272,60 @@ class RoutineRepository(
             }
             newRoutineId
         }
+    }
+
+    /**
+     * Copia un día completo, con sus ejercicios y sus series objetivo, al final de
+     * otra rutina. Devuelve el id del día nuevo, o null si el día o la rutina de
+     * destino ya no existen.
+     *
+     * El día de la semana solo se conserva si en el destino está libre: dos días
+     * el mismo martes harían que los recordatorios avisaran dos veces.
+     */
+    suspend fun copyDayToRoutine(dayId: Long, targetRoutineId: Long): Long? = withContext(dispatcher) {
+        db.transactionWithResult {
+            val day = q.selectRoutineDayById(dayId).executeAsOneOrNull()
+                ?: return@transactionWithResult null
+            q.selectRoutineById(targetRoutineId).executeAsOneOrNull()
+                ?: return@transactionWithResult null
+
+            val existing = q.selectDaysForRoutine(targetRoutineId).executeAsList()
+            val weekday = day.weekday?.takeIf { candidate -> existing.none { it.weekday == candidate } }
+
+            q.insertRoutineDay(
+                routineId = targetRoutineId,
+                dayIndex = existing.size.toLong(),
+                name = nextCopyDayName(day.name, existing.map { it.name }.toSet()),
+                weekday = weekday,
+            )
+            val newDayId = db.catalogQueries.lastInsertRowId().executeAsOne()
+
+            q.selectExercisesForDay(dayId).executeAsList().forEach { item ->
+                q.insertRoutineExercise(
+                    routineDayId = newDayId,
+                    exerciseId = item.exerciseId,
+                    position = item.position,
+                    targetSets = item.targetSets,
+                    targetRepsMin = item.targetRepsMin,
+                    targetRepsMax = item.targetRepsMax,
+                    targetTimeSeconds = item.targetTimeSeconds,
+                    targetWeight = item.targetWeight,
+                    restSeconds = item.restSeconds,
+                    notes = item.notes,
+                )
+            }
+            newDayId
+        }
+    }
+
+    /** Solo desambigua si el destino ya tiene un día con ese nombre. */
+    private fun nextCopyDayName(name: String, existing: Set<String>): String {
+        if (name !in existing) return name
+        val base = "$name (copia)"
+        if (base !in existing) return base
+        var index = 2
+        while ("$name (copia $index)" in existing) index++
+        return "$name (copia $index)"
     }
 
     /** "Torso" → "Torso (copia)", y si ya existe → "Torso (copia 2)". */

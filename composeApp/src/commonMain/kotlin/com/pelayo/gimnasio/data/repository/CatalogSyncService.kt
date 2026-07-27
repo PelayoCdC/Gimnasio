@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.data.repository
 
+import com.pelayo.gimnasio.data.db.DatabaseSeeder
 import com.pelayo.gimnasio.data.db.WgerMappings
 import com.pelayo.gimnasio.data.remote.WgerApi
 import com.pelayo.gimnasio.data.remote.WgerMapper
@@ -66,6 +67,7 @@ class CatalogSyncService(
                             metValue = mapped.metValue,
                             exerciseType = mapped.exerciseType,
                             wgerId = mapped.wgerId,
+                            searchName = DatabaseSeeder.searchNameFor(mapped.nameEs, mapped.nameEn),
                         )
                         val exerciseId = q.selectExerciseIdByWgerId(mapped.wgerId).executeAsOne()
                         q.deleteExerciseMuscles(exerciseId)

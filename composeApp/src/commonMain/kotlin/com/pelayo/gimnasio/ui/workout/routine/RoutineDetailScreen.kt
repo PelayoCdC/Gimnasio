@@ -18,8 +18,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -39,6 +41,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -47,6 +51,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,12 +60,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil3.compose.AsyncImage
+import com.pelayo.gimnasio.domain.calc.RoutineSuggestion
+import com.pelayo.gimnasio.domain.calc.SuggestionKind
 import com.pelayo.gimnasio.domain.model.RoutineDayInfo
 import com.pelayo.gimnasio.domain.model.RoutineExerciseItem
+import com.pelayo.gimnasio.domain.model.RoutineSummary
 import com.pelayo.gimnasio.domain.model.labelEs
 import com.pelayo.gimnasio.domain.model.weekdayNamesEs
 import com.pelayo.gimnasio.ui.components.BalancePanel
 import com.pelayo.gimnasio.ui.components.MuscleMap
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -76,9 +85,14 @@ fun RoutineDetailScreen(
 ) {
     val routine by viewModel.routine.collectAsState()
     val balance by viewModel.balance.collectAsState()
+    val suggestions by viewModel.suggestions.collectAsState()
+    val otherRoutines by viewModel.otherRoutines.collectAsState()
     var showAddDayDialog by remember { mutableStateOf(false) }
     var exerciseToEdit by remember { mutableStateOf<RoutineExerciseItem?>(null) }
     var dayToEdit by remember { mutableStateOf<RoutineDayInfo?>(null) }
+    var dayToCopy by remember { mutableStateOf<RoutineDayInfo?>(null) }
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     // Al volver del selector de ejercicios hay que refrescar la rutina y su balance.
     LifecycleResumeEffect(routineId) {
@@ -97,6 +111,7 @@ fun RoutineDetailScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         val current = routine
         if (current == null) {
@@ -135,6 +150,17 @@ fun RoutineDetailScreen(
 
             balance?.let { report ->
                 item { BalancePanel(report) }
+
+                if (suggestions.isNotEmpty()) {
+                    item {
+                        SuggestionsCard(
+                            suggestions = suggestions,
+                            onApply = viewModel::applySuggestion,
+                            onDismiss = viewModel::dismissSuggestion,
+                        )
+                    }
+                }
+
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
@@ -158,6 +184,7 @@ fun RoutineDetailScreen(
                     DayCard(
                         day = day,
                         onAddExercise = { onAddExercise(day.id) },
+                        onCopyDay = { dayToCopy = day },
                         onEditDay = { dayToEdit = day },
                         onDeleteDay = { viewModel.deleteDay(day.id) },
                         onEditExercise = { exerciseToEdit = it },
@@ -210,6 +237,20 @@ fun RoutineDetailScreen(
         )
     }
 
+    dayToCopy?.let { day ->
+        CopyDayDialog(
+            day = day,
+            routines = otherRoutines,
+            onDismiss = { dayToCopy = null },
+            onPick = { target ->
+                dayToCopy = null
+                viewModel.copyDayTo(day.id, target.id) {
+                    scope.launch { snackbarHost.showSnackbar("\"${day.name}\" copiado a ${target.name}") }
+                }
+            },
+        )
+    }
+
     exerciseToEdit?.let { exercise ->
         EditExerciseDialog(
             exercise = exercise,
@@ -231,10 +272,98 @@ fun RoutineDetailScreen(
     }
 }
 
+/**
+ * Convierte los avisos de descompensación en cosas que se pueden aplicar de un
+ * toque. Cada sugerencia se puede descartar: son consejos, no deberes.
+ */
+@Composable
+private fun SuggestionsCard(
+    suggestions: List<RoutineSuggestion>,
+    onApply: (RoutineSuggestion) -> Unit,
+    onDismiss: (RoutineSuggestion) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Sugerencias", style = MaterialTheme.typography.titleMedium)
+            }
+
+            suggestions.forEach { suggestion ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(suggestion.message, style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = { onApply(suggestion) }) {
+                            Text(
+                                if (suggestion.kind == SuggestionKind.CAMBIAR) "Cambiar" else "Añadir",
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = { onDismiss(suggestion) }) { Text("Ahora no") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Lista de rutinas de destino para copiar un día. */
+@Composable
+private fun CopyDayDialog(
+    day: RoutineDayInfo,
+    routines: List<RoutineSummary>,
+    onDismiss: () -> Unit,
+    onPick: (RoutineSummary) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Copiar \"${day.name}\"") },
+        text = {
+            if (routines.isEmpty()) {
+                Text("No hay otra rutina a la que copiarlo. Crea otra rutina primero.")
+            } else {
+                Column {
+                    Text(
+                        "Se copiarán sus ${day.exercises.size} ejercicios con sus series y descansos.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    routines.forEach { target ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(target) }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(target.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${target.dayCount} días · ${target.exerciseCount} ejercicios",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+    )
+}
+
 @Composable
 private fun DayCard(
     day: RoutineDayInfo,
     onAddExercise: () -> Unit,
+    onCopyDay: () -> Unit,
     onEditDay: () -> Unit,
     onDeleteDay: () -> Unit,
     onEditExercise: (RoutineExerciseItem) -> Unit,
@@ -254,6 +383,9 @@ private fun DayCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                IconButton(onClick = onCopyDay) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar día a otra rutina")
                 }
                 IconButton(onClick = onEditDay) {
                     Icon(Icons.Filled.Edit, contentDescription = "Editar día")

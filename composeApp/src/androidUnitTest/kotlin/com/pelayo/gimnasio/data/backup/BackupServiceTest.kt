@@ -251,7 +251,9 @@ class BackupServiceTest {
     fun el_ejercicio_creado_a_mano_sobrevive_al_viaje() = runTest {
         val origin = Env()
         origin.seedCatalog()
-        origin.db.catalogQueries.insertCustomExercise("Remo invertido", "Bajo la barra", 3.5, "REPS")
+        origin.db.catalogQueries.insertCustomExercise(
+            "Remo invertido", "Bajo la barra", 3.5, "REPS", "remo invertido",
+        )
         val customId = origin.db.catalogQueries.lastInsertRowId().executeAsOne()
         origin.db.catalogQueries.insertExerciseMuscle(customId, 12L, "PRIMARY")
 
