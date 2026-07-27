@@ -154,34 +154,5 @@ internal object BodyShapes {
         "M61.4 138 C 59 140.4, 55.6 140.4, 53.2 138 C 53.4 149, 53.8 158, 54.4 165 " +
             "C 56.4 167, 59 167, 60.2 165 C 60.8 158, 61.2 149, 61.4 138 Z"
 
-    private val token = Regex("[MLCZ]|-?\\d+(?:\\.\\d+)?")
-
-    /**
-     * Lee una ruta SVG con M, L, C y Z absolutos. Cualquier otro comando es un
-     * error de quien escribe los datos, no algo que pueda pasar en runtime, así
-     * que se ignora en silencio antes que reventar el dibujo entero.
-     */
-    internal fun parse(data: String): Path {
-        val path = Path()
-        val tokens = token.findAll(data).map { it.value }.toList()
-        var index = 0
-        var command = ""
-        while (index < tokens.size) {
-            val current = tokens[index]
-            if (current[0].isLetter()) {
-                command = current
-                index++
-                if (command == "Z") path.close()
-                continue
-            }
-            fun next() = tokens[index++].toFloat()
-            when (command) {
-                "M" -> path.moveTo(next(), next())
-                "L" -> path.lineTo(next(), next())
-                "C" -> path.cubicTo(next(), next(), next(), next(), next(), next())
-                else -> index++
-            }
-        }
-        return path
-    }
+    internal fun parse(data: String): Path = svgPath(data)
 }

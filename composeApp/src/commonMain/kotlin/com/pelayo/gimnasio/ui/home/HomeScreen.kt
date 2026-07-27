@@ -47,6 +47,7 @@ import com.pelayo.gimnasio.domain.calc.StreakInfo
 import com.pelayo.gimnasio.domain.model.CalorieBalance
 import com.pelayo.gimnasio.domain.model.formatKg
 import com.pelayo.gimnasio.domain.model.weekdayNamesEs
+import com.pelayo.gimnasio.ui.components.GimnasioLogo
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -68,7 +69,21 @@ fun HomeScreen(
         onPauseOrDispose { }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Gimnasio") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    // El logotipo va dentro del título y no en el hueco del icono
+                    // de navegación, que reserva 48dp y lo dejaba descolgado.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        GimnasioLogo(size = 30.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Gimnasio")
+                    }
+                },
+            )
+        },
+    ) { padding ->
         if (state.loading) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()

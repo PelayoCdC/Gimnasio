@@ -173,6 +173,20 @@ con domingo = 1 y el modelo usa ISO (lunes = 1), así que hay una conversión en
 minSdk 26 todos los dispositivos lo soportan. El dibujo cabe en el círculo seguro
 de 72 del lienzo de 108.
 
+`GimnasioLogo` repite ese mismo dibujo en código común para poder enseñarlo
+dentro de la app (hoy, en la cabecera de Inicio): los recursos de Android no se
+pueden leer desde `commonMain`, así que las rutas están copiadas del `pathData`
+del vector. **Si se retoca el icono, hay que retocar las dos.** Ahí la mancuerna
+va un 18 % más grande, porque dentro de la app no hay zona segura que respetar.
+Los colores van fijos y no salen del tema: es una marca y debe verse igual en
+claro y en oscuro.
+
+**Las rutas SVG las lee `svgPath`**, compartido por el mapa muscular y el
+logotipo. Entiende `M`, `L`, `C`, `Q` y `Z` **absolutos**; lo demás lo descarta
+junto con sus números. Ese descarte importa: cuando se comía solo la letra, los
+números del comando ignorado se colaban en el anterior y acababan tumbando la
+pantalla con un `NumberFormatException`.
+
 **Las dependencias de Compose, lifecycle y navegación tienen que ser las de
 JetBrains** (`compose.*` y `org.jetbrains.androidx.*`), no las de `androidx` a
 secas. Las de AndroidX no publican targets de Apple todavía; las de JetBrains los
