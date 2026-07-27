@@ -4,6 +4,10 @@ import com.pelayo.gimnasio.data.remote.MappedFood
 import com.pelayo.gimnasio.data.remote.OffMapper
 import com.pelayo.gimnasio.data.remote.OpenFoodFactsApi
 import com.pelayo.gimnasio.data.remote.OpenFoodFactsException
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.serialization.JsonConvertException
+import kotlinx.serialization.SerializationException
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.model.CalorieBalance
 import com.pelayo.gimnasio.domain.model.DayNutrition
@@ -61,12 +65,26 @@ class NutritionRepository(
     }
 
     /**
-     * Los fallos de red llegan como excepciones de Ktor con mensajes en inglés y
-     * poco claros; aquí se convierten en algo que se pueda enseñar tal cual.
+     * Los fallos llegan como excepciones de Ktor con mensajes en inglés y poco
+     * claros; aquí se convierten en algo que se pueda enseñar tal cual.
+     *
+     * Distinguir el fallo de formato del de red no es cosmético: cuando Open Food
+     * Facts cambió el tipo de un campo, la app culpaba a la conexión del usuario y
+     * la pista para arreglarlo se perdía.
      */
     private fun <T> Result<T>.mapFailureToMessage(): Result<T> = recoverCatching { error ->
         throw when (error) {
             is OpenFoodFactsException -> error
+
+            is JsonConvertException, is SerializationException -> OpenFoodFactsException(
+                "Open Food Facts ha respondido algo que esta versión de la app no entiende. " +
+                    "Puedes crear el alimento a mano mientras tanto.",
+            )
+
+            is HttpRequestTimeoutException, is ConnectTimeoutException -> OpenFoodFactsException(
+                "Open Food Facts está tardando demasiado en responder. Inténtalo en un rato.",
+            )
+
             else -> OpenFoodFactsException(
                 "No se pudo conectar con Open Food Facts. Comprueba tu conexión a internet.",
             )

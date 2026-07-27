@@ -114,11 +114,26 @@ que la JVM se caiga con "insufficient memory".
 - **Open Food Facts**: alimentos. `status` 1/0 indica si el producto existe, y
   `serving_quantity` llega unas veces como número y otras como cadena.
 
-**La búsqueda por texto va contra `search.openfoodfacts.org`, no contra
-`cgi/search.pl`.** El endpoint antiguo responde 503 de forma sistemática (probado
-en `world.` y en `es.`). El nuevo devuelve los productos en `hits`, no en
-`products`; el resto de campos son iguales. Los códigos de barras sí siguen en
-`world.openfoodfacts.org/api/v2/product/`, que funciona bien.
+**La búsqueda de alimentos necesita dos peticiones, y no es por gusto.**
+`search.openfoodfacts.org` busca por texto bien, pero **no devuelve `nutriments`
+ni pidiéndolo en `fields`**: de ahí solo salen los códigos de barras. Los datos
+completos los da la búsqueda de la API v2
+(`world.openfoodfacts.org/api/v2/search?code=c1,c2,...`), que acepta los códigos
+separados por comas y resuelve la lista entera en una sola llamada. El orden de
+relevancia lo pone el primer paso. El `cgi/search.pl` antiguo sí trae todo junto,
+pero se corta a las pocas peticiones.
+
+**`brands` llega como lista en el buscador nuevo y como cadena en la v2.** Ese
+desajuste reventaba la deserialización y la app enseñaba "comprueba tu conexión a
+internet" con la conexión perfecta. Lo resuelve `BrandsSerializer`, que acepta las
+dos formas. Por lo mismo, `NutritionRepository` distingue ahora el fallo de
+formato del de red: si vuelve a cambiar un campo, el mensaje lo dice en vez de
+culpar al usuario.
+
+**Open Food Facts limita por IP a los usuarios anónimos** (unas 10 búsquedas por
+minuto) y cuando corta devuelve **503** con una página HTML de aviso. Como es un
+503 de verdad, el trato de errores ya lo cuenta bien. La búsqueda online se lanza
+con un botón, no al teclear, justo para no gastar el cupo.
 
 **Los errores de OFF se traducen a español en `OpenFoodFactsApi.ensureSuccess()`**
 y el repositorio envuelve los fallos de red en `OpenFoodFactsException`, para que

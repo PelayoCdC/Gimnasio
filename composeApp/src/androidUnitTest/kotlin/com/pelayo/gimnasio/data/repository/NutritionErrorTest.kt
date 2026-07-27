@@ -5,9 +5,13 @@ import com.pelayo.gimnasio.data.remote.HttpClientFactory
 import com.pelayo.gimnasio.data.remote.OpenFoodFactsApi
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.respondError
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
@@ -57,6 +61,34 @@ class NutritionErrorTest {
             result.exceptionOrNull()?.message.orEmpty().contains("conexión"),
             "mensaje: ${result.exceptionOrNull()?.message}",
         )
+    }
+
+    @Test
+    fun una_respuesta_que_no_encaja_no_culpa_a_la_conexion() = runTest {
+        // Es lo que pasaba de verdad: OFF respondía 200 con un campo de otro tipo
+        // y la app decía que no había internet, con internet perfecto.
+        val engine = MockEngine {
+            respond(
+                // Una lista donde se espera un texto: exactamente el desajuste
+                // que traía `brands` del buscador nuevo.
+                content = """{"count":1,"hits":[{"code":["111","222"]}]}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(HttpClientFactory.json) }
+        }
+        val repo = NutritionRepository(
+            createTestDatabase(), OpenFoodFactsApi(client), Dispatchers.Unconfined,
+        )
+
+        val result = repo.searchOnline("avena")
+
+        assertTrue(result.isFailure)
+        val message = result.exceptionOrNull()?.message.orEmpty()
+        assertTrue(message.contains("no entiende"), "mensaje: $message")
+        assertTrue(!message.contains("conexión"), "sigue culpando a la conexión: $message")
     }
 
     @Test

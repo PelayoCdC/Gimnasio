@@ -44,6 +44,22 @@ class OpenFoodFactsApiTest {
         return OpenFoodFactsApi(client) to engine
     }
 
+    /** Responde a cada petición por orden: primero el buscador, luego el lote v2. */
+    private fun apiRespondingInOrder(vararg bodies: String): Pair<OpenFoodFactsApi, MockEngine> {
+        var index = 0
+        val engine = MockEngine {
+            respond(
+                content = bodies[index++.coerceAtMost(bodies.lastIndex)],
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(HttpClientFactory.json) }
+        }
+        return OpenFoodFactsApi(client) to engine
+    }
+
     @Test
     fun la_busqueda_apunta_al_servicio_nuevo() = runTest {
         val (api, engine) = apiRespondingWith(HttpStatusCode.OK, """{"count":0,"hits":[]}""")
@@ -54,6 +70,59 @@ class OpenFoodFactsApiTest {
         assertTrue(url.startsWith("https://search.openfoodfacts.org/search"), "URL usada: $url")
         assertTrue(url.contains("q=avena"), "falta el término de búsqueda: $url")
         assertTrue(!url.contains("search.pl"), "sigue usando el endpoint antiguo")
+    }
+
+    @Test
+    fun completa_los_nutrientes_con_una_segunda_peticion_en_lote() = runTest {
+        // El buscador nuevo no devuelve nutrientes por mucho que se pidan, así
+        // que de él solo salen los códigos.
+        val (api, engine) = apiRespondingInOrder(
+            """{"count":2,"hits":[{"code":"111"},{"code":"222"}]}""",
+            """{"count":2,"products":[
+                {"code":"222","product_name":"Avena integral","nutriments":{"energy-kcal_100g":380}},
+                {"code":"111","product_name":"Galletas de avena","nutriments":{"energy-kcal_100g":450}}
+            ]}""",
+        )
+
+        val products = api.search("avena")
+
+        assertEquals(2, engine.requestHistory.size, "debería hacer dos peticiones")
+        val lote = engine.requestHistory[1].url.toString()
+        assertTrue(lote.startsWith("https://world.openfoodfacts.org/api/v2/search"), "URL: $lote")
+        assertTrue(lote.contains("code=111%2C222") || lote.contains("code=111,222"), "URL: $lote")
+        assertTrue(lote.contains("nutriments"), "no pide los nutrientes: $lote")
+
+        // Manda el orden de relevancia del buscador, no el que devuelva el lote.
+        assertEquals(listOf("111", "222"), products.map { it.code })
+        assertEquals(450.0, products.first().nutriments.kcalPer100)
+    }
+
+    @Test
+    fun sin_resultados_no_hace_la_segunda_peticion() = runTest {
+        val (api, engine) = apiRespondingWith(HttpStatusCode.OK, """{"count":0,"hits":[]}""")
+
+        assertTrue(api.search("noexiste").isEmpty())
+        assertEquals(1, engine.requestHistory.size)
+    }
+
+    @Test
+    fun las_marcas_valen_como_lista_y_como_cadena() = runTest {
+        // El buscador nuevo devuelve brands como lista y la v2 como cadena; que la
+        // lista reventara la deserialización es lo que dejó la búsqueda inservible.
+        val (api, _) = apiRespondingInOrder(
+            """{"count":2,"hits":[{"code":"111","brands":["Hacendado","Mercadona"]},{"code":"222"}]}""",
+            """{"count":2,"products":[
+                {"code":"111","product_name":"Leche","brands":["Hacendado","Mercadona"],
+                 "nutriments":{"energy-kcal_100g":45}},
+                {"code":"222","product_name":"Queso","brands":"Garcia Baquero",
+                 "nutriments":{"energy-kcal_100g":300}}
+            ]}""",
+        )
+
+        val products = api.search("lacteos")
+
+        assertEquals("Hacendado, Mercadona", products.first { it.code == "111" }.brands)
+        assertEquals("Garcia Baquero", products.first { it.code == "222" }.brands)
     }
 
     @Test

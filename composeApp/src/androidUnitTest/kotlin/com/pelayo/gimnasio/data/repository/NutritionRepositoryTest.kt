@@ -26,13 +26,25 @@ import kotlin.test.assertTrue
 
 class NutritionRepositoryTest {
 
+    /**
+     * Open Food Facts se consulta de tres formas y el motor simulado responde
+     * según cuál sea: el buscador por texto (que solo da códigos), la búsqueda en
+     * lote de la v2 (que da los datos completos) y el producto por código.
+     */
     private fun repo(
         db: GimnasioDb = createTestDatabase(),
-        offResponse: String = """{"count":0,"hits":[]}""",
+        offResponse: String = """{"status":0}""",
+        offHits: String = """{"count":0,"hits":[]}""",
+        offProducts: String = """{"count":0,"products":[]}""",
     ): Pair<NutritionRepository, GimnasioDb> {
-        val engine = MockEngine {
+        val engine = MockEngine { request ->
+            val content = when {
+                request.url.host.startsWith("search.") -> offHits
+                request.url.encodedPath.endsWith("/api/v2/search") -> offProducts
+                else -> offResponse
+            }
             respond(
-                content = offResponse,
+                content = content,
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
@@ -144,10 +156,12 @@ class NutritionRepositoryTest {
 
     @Test
     fun la_busqueda_online_cachea_los_productos_en_local() = runTest {
-        val offJson = """
+        // El buscador solo devuelve el código, y con las marcas en lista.
+        val offHits = """{"count":1,"hits":[{"code":"3017624010701","brands":["Ferrero"]}]}"""
+        val offProducts = """
         {
           "count": 1,
-          "hits": [
+          "products": [
             {
               "code": "3017624010701",
               "product_name_es": "Crema de cacao",
@@ -158,7 +172,7 @@ class NutritionRepositoryTest {
           ]
         }
         """.trimIndent()
-        val (repo, _) = repo(offResponse = offJson)
+        val (repo, _) = repo(offHits = offHits, offProducts = offProducts)
 
         assertTrue(repo.searchLocal("cacao").isEmpty())
 

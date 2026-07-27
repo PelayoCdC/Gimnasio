@@ -16,10 +16,13 @@ class OpenFoodFactsApi(private val client: HttpClient) {
         const val PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product"
 
         /**
-         * Servicio de búsqueda actual de Open Food Facts. El antiguo
-         * `cgi/search.pl` está saturado y responde 503 de forma sistemática.
+         * Servicio de búsqueda por texto de Open Food Facts. El antiguo
+         * `cgi/search.pl` está limitadísimo y responde 503 a poco que se insista.
          */
         const val SEARCH_URL = "https://search.openfoodfacts.org/search"
+
+        /** Búsqueda de la API v2, que admite varios códigos separados por comas. */
+        const val PRODUCTS_URL = "https://world.openfoodfacts.org/api/v2/search"
 
         const val FIELDS =
             "code,product_name,product_name_es,brands,image_front_small_url,serving_quantity,nutriments"
@@ -34,12 +37,37 @@ class OpenFoodFactsApi(private val client: HttpClient) {
         return body.product.takeIf { body.status == 1 }
     }
 
+    /**
+     * Busca en dos pasos, porque ningún endpoint hace las dos cosas bien:
+     *
+     * 1. `search.openfoodfacts.org` busca por texto de maravilla, pero **no
+     *    devuelve los nutrientes** por mucho que se pidan en `fields`, así que
+     *    solo se le piden los códigos de barras.
+     * 2. La búsqueda de la API v2 acepta varios códigos separados por comas y sí
+     *    trae `nutriments`, de modo que una sola petición completa la lista.
+     *
+     * El orden de relevancia lo pone el primer paso; el segundo solo rellena.
+     */
     suspend fun search(query: String, pageSize: Int = 25): List<OffProduct> {
-        val response = client.get(SEARCH_URL) {
+        val codes = client.get(SEARCH_URL) {
             parameter("q", query)
             parameter("page_size", pageSize)
+            parameter("fields", "code")
         }.ensureSuccess()
-        return response.body<OffSearchResponse>().hits
+            .body<OffSearchResponse>().hits
+            .mapNotNull { it.code?.takeIf { code -> code.isNotBlank() } }
+            .distinct()
+        if (codes.isEmpty()) return emptyList()
+
+        val byCode = client.get(PRODUCTS_URL) {
+            parameter("code", codes.joinToString(","))
+            parameter("fields", FIELDS)
+            parameter("page_size", codes.size)
+        }.ensureSuccess()
+            .body<OffProductsResponse>().products
+            .associateBy { it.code }
+
+        return codes.mapNotNull { byCode[it] }
     }
 
     /**
