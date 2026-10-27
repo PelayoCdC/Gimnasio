@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.ui.nutrition
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -17,9 +18,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import com.pelayo.gimnasio.ui.components.TagChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ElevatedCard
@@ -46,10 +49,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.pelayo.gimnasio.domain.model.DietPlanItem
+import com.pelayo.gimnasio.domain.model.DietPlanMealItem
+import com.pelayo.gimnasio.domain.model.FoodItem
+import com.pelayo.gimnasio.domain.model.FoodUnit
 import com.pelayo.gimnasio.domain.model.Macros
 import com.pelayo.gimnasio.domain.model.MealType
 import com.pelayo.gimnasio.domain.model.RoutineGoal
 import com.pelayo.gimnasio.domain.model.labelEs
+import com.pelayo.gimnasio.domain.model.weekdayNamesEs
+import com.pelayo.gimnasio.ui.components.ConfirmDeleteDialog
+import com.pelayo.gimnasio.util.weekdayInitialsEs
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.roundToInt
 
@@ -61,9 +70,16 @@ fun DietPlanScreen(
 ) {
     val plans by viewModel.plans.collectAsState()
     val selected by viewModel.selected.collectAsState()
+    val day by viewModel.selectedDay.collectAsState()
     val message by viewModel.message.collectAsState()
     var showCreate by remember { mutableStateOf(false) }
     var addingTo by remember { mutableStateOf<MealType?>(null) }
+    var editing by remember { mutableStateOf<DietPlanMealItem?>(null) }
+    var showCopyDay by remember { mutableStateOf(false) }
+    var confirmDeletePlan by remember { mutableStateOf(false) }
+    var showEditPlan by remember { mutableStateOf(false) }
+    /** Día destino de la copia pendiente de confirmar, porque pisa su menú. */
+    var copyTargetToConfirm by remember { mutableStateOf<Int?>(null) }
 
     LifecycleResumeEffect(Unit) {
         viewModel.reload()
@@ -98,8 +114,8 @@ fun DietPlanScreen(
                         Text("Sin planes de dieta", style = MaterialTheme.typography.titleLarge)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Un plan es un menú tipo con objetivos de calorías y macros. " +
-                                "Puedes volcarlo al diario de un día con un toque.",
+                            "Un plan es el menú de la semana con objetivos de calorías y macros. " +
+                                "Puedes volcar el día que toque al diario con un toque.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(16.dp))
@@ -132,7 +148,15 @@ fun DietPlanScreen(
             }
 
             selected?.let { plan ->
-                item { PlanSummaryCard(plan) }
+                item { PlanSummaryCard(plan, day) }
+
+                item {
+                    WeekSelector(
+                        selectedDay = day,
+                        plannedDays = plan.plannedDays,
+                        onSelect = viewModel::selectDay,
+                    )
+                }
 
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -142,6 +166,7 @@ fun DietPlanScreen(
                             }
                         }
                         Button(onClick = viewModel::applyToToday) { Text("Aplicar a hoy") }
+                        OutlinedButton(onClick = { showEditPlan = true }) { Text("Editar") }
                     }
                 }
 
@@ -152,21 +177,32 @@ fun DietPlanScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(meal.labelEs, style = MaterialTheme.typography.titleMedium)
                                     Spacer(Modifier.weight(1f))
-                                    val kcal = plan.mealsFor(meal).sumOf { it.macros.kcal }
+                                    val kcal = plan.mealsFor(day, meal).sumOf { it.macros.kcal }
                                     Text(
                                         "${kcal.roundToInt()} kcal",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                plan.mealsFor(meal).forEach { item ->
+                                plan.mealsFor(day, meal).forEach { item ->
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
+                                        Column(
+                                            Modifier
+                                                .weight(1f)
+                                                .clickable { editing = item }
+                                                .padding(vertical = 8.dp),
+                                        ) {
                                             Text(item.name, style = MaterialTheme.typography.bodyMedium)
                                             Text(
                                                 "${item.quantityLabel} · ${item.macros.kcal.roundToInt()} kcal",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        IconButton(onClick = { editing = item }) {
+                                            Icon(
+                                                Icons.Filled.Edit,
+                                                contentDescription = "Editar ${item.name}",
                                             )
                                         }
                                         IconButton(onClick = { viewModel.removeMeal(item.id) }) {
@@ -186,7 +222,18 @@ fun DietPlanScreen(
 
                 item {
                     OutlinedButton(
-                        onClick = { viewModel.deletePlan(plan.id) },
+                        onClick = { showCopyDay = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copiar el ${weekdayNamesEs[day - 1].lowercase()} a otro día")
+                    }
+                }
+
+                item {
+                    OutlinedButton(
+                        onClick = { confirmDeletePlan = true },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Borrar este plan") }
                 }
@@ -208,8 +255,82 @@ fun DietPlanScreen(
         AddToPlanDialog(
             viewModel = viewModel,
             mealType = meal,
+            dayOfWeek = day,
             onDismiss = { addingTo = null },
         )
+    }
+
+    editing?.let { item ->
+        EditQuantityDialog(
+            title = item.name,
+            isRecipe = item.recipeId != null,
+            unit = item.unit,
+            initialAmount = (item.servings ?: item.grams) ?: 0.0,
+            initialMeal = item.mealType,
+            onDismiss = { editing = null },
+            onConfirm = { meal, amount ->
+                viewModel.updateMeal(item, meal, amount)
+                editing = null
+            },
+        )
+    }
+
+    if (showCopyDay) {
+        CopyDayDialog(
+            fromDay = day,
+            onDismiss = { showCopyDay = false },
+            onCopy = { target ->
+                showCopyDay = false
+                // Si el destino ya tiene menú, copiar lo machaca: se confirma antes.
+                if (selected?.plannedDays?.contains(target) == true) {
+                    copyTargetToConfirm = target
+                } else {
+                    viewModel.copyDayTo(target)
+                }
+            },
+        )
+    }
+
+    copyTargetToConfirm?.let { target ->
+        ConfirmDeleteDialog(
+            title = "¿Reemplazar el ${weekdayNamesEs[target - 1].lowercase()}?",
+            text = "El ${weekdayNamesEs[target - 1].lowercase()} ya tiene menú y se " +
+                "sustituirá por el del ${weekdayNamesEs[day - 1].lowercase()}.",
+            confirmLabel = "Reemplazar",
+            onDismiss = { copyTargetToConfirm = null },
+            onConfirm = {
+                viewModel.copyDayTo(target)
+                copyTargetToConfirm = null
+            },
+        )
+    }
+
+    if (showEditPlan) {
+        selected?.let { plan ->
+            EditPlanDialog(
+                plan = plan,
+                onDismiss = { showEditPlan = false },
+                onSave = { name, kcal, protein, carbs, fat ->
+                    viewModel.updatePlan(plan.id, name, kcal, protein, carbs, fat)
+                    showEditPlan = false
+                },
+            )
+        }
+    }
+
+    if (confirmDeletePlan) {
+        selected?.let { plan ->
+            ConfirmDeleteDialog(
+                title = "¿Borrar \"${plan.name}\"?",
+                text = "Se borra el plan con el menú de toda la semana. " +
+                    "Lo ya apuntado en el diario no se toca.",
+                onDismiss = { confirmDeletePlan = false },
+                onConfirm = {
+                    viewModel.deletePlan(plan.id)
+                    confirmDeletePlan = false
+                },
+            )
+        }
     }
 
     message?.let { text ->
@@ -222,13 +343,78 @@ fun DietPlanScreen(
     }
 }
 
+/**
+ * Los siete días de la semana. El punto marca los que ya tienen menú, para ver de
+ * un vistazo lo que queda por planificar.
+ */
 @Composable
-private fun PlanSummaryCard(plan: DietPlanItem) {
+private fun WeekSelector(
+    selectedDay: Int,
+    plannedDays: Set<Int>,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        weekdayInitialsEs.forEachIndexed { index, initial ->
+            val dayOfWeek = index + 1
+            FilterChip(
+                selected = selectedDay == dayOfWeek,
+                onClick = { onSelect(dayOfWeek) },
+                label = {
+                    Text(if (plannedDays.contains(dayOfWeek)) "$initial ·" else initial)
+                },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CopyDayDialog(
+    fromDay: Int,
+    onDismiss: () -> Unit,
+    onCopy: (Int) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Copiar el ${weekdayNamesEs[fromDay - 1].lowercase()}") },
+        text = {
+            Column {
+                Text(
+                    "El día que elijas se queda con este mismo menú y pierde el que tuviera.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                weekdayNamesEs.forEachIndexed { index, name ->
+                    val dayOfWeek = index + 1
+                    if (dayOfWeek != fromDay) {
+                        TextButton(
+                            onClick = { onCopy(dayOfWeek) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(name) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+@Composable
+private fun PlanSummaryCard(plan: DietPlanItem, dayOfWeek: Int) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(plan.name, style = MaterialTheme.typography.titleLarge)
+            Text(
+                weekdayNamesEs[dayOfWeek - 1],
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
 
-            val planned = plan.plannedMacros
+            val planned = plan.plannedMacros(dayOfWeek)
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Column {
                     Text(
@@ -329,14 +515,9 @@ private fun CreatePlanDialog(
                         }
                     }
                     targets?.let {
-                        AssistChip(
-                            onClick = {},
-                            label = {
-                                Text(
-                                    "${it.kcal.roundToInt()} kcal · P ${it.protein.roundToInt()} " +
-                                        "· C ${it.carbs.roundToInt()} · G ${it.fat.roundToInt()}",
-                                )
-                            },
+                        TagChip(
+                            label = "${it.kcal.roundToInt()} kcal · P ${it.protein.roundToInt()} " +
+                                "· C ${it.carbs.roundToInt()} · G ${it.fat.roundToInt()}",
                         )
                         Text(
                             "Calculado sobre tu gasto diario estimado.",
@@ -357,24 +538,104 @@ private fun CreatePlanDialog(
     )
 }
 
+/** Nombre y objetivos diarios de un plan ya creado; el menú semanal no se toca. */
+@Composable
+private fun EditPlanDialog(
+    plan: DietPlanItem,
+    onDismiss: () -> Unit,
+    onSave: (String, Double?, Double?, Double?, Double?) -> Unit,
+) {
+    var name by remember { mutableStateOf(plan.name) }
+    var kcal by remember { mutableStateOf(plan.targetKcal?.roundToInt()?.toString() ?: "") }
+    var protein by remember { mutableStateOf(plan.targetProteinG?.roundToInt()?.toString() ?: "") }
+    var carbs by remember { mutableStateOf(plan.targetCarbsG?.roundToInt()?.toString() ?: "") }
+    var fat by remember { mutableStateOf(plan.targetFatG?.roundToInt()?.toString() ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Editar plan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                )
+                Text("Objetivos diarios (opcional)", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(
+                    value = kcal,
+                    onValueChange = { kcal = it.filter(Char::isDigit) },
+                    label = { Text("Calorías") },
+                    singleLine = true,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = protein,
+                        onValueChange = { protein = it.filter(Char::isDigit) },
+                        label = { Text("Proteína (g)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = carbs,
+                        onValueChange = { carbs = it.filter(Char::isDigit) },
+                        label = { Text("Carbohid. (g)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = fat,
+                        onValueChange = { fat = it.filter(Char::isDigit) },
+                        label = { Text("Grasa (g)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onSave(
+                        name.trim(),
+                        kcal.toDoubleOrNull(),
+                        protein.toDoubleOrNull(),
+                        carbs.toDoubleOrNull(),
+                        fat.toDoubleOrNull(),
+                    )
+                },
+            ) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
 @Composable
 private fun AddToPlanDialog(
     viewModel: DietPlanViewModel,
     mealType: MealType,
+    dayOfWeek: Int,
     onDismiss: () -> Unit,
 ) {
     val foods by viewModel.foods.collectAsState()
     val recipes by viewModel.recipes.collectAsState()
     val query by viewModel.foodQuery.collectAsState()
-    var selectedFoodId by remember { mutableStateOf<Long?>(null) }
+    var selectedFood by remember { mutableStateOf<FoodItem?>(null) }
     var selectedRecipeId by remember { mutableStateOf<Long?>(null) }
     var amount by remember { mutableStateOf("100") }
 
-    val hasSelection = selectedFoodId != null || selectedRecipeId != null
+    val hasSelection = selectedFood != null || selectedRecipeId != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Añadir a ${mealType.labelEs.lowercase()}") },
+        title = {
+            Text(
+                "Añadir a ${mealType.labelEs.lowercase()} " +
+                    "del ${weekdayNamesEs[dayOfWeek - 1].lowercase()}",
+            )
+        },
         text = {
             if (!hasSelection) {
                 Column {
@@ -426,15 +687,15 @@ private fun AddToPlanDialog(
                             val food = foods[index]
                             Card(
                                 onClick = {
-                                    selectedFoodId = food.id
-                                    amount = (food.servingSizeG ?: 100.0).roundToInt().toString()
+                                    selectedFood = food
+                                    amount = (food.servingSize ?: 100.0).roundToInt().toString()
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             ) {
                                 Column(Modifier.padding(12.dp)) {
                                     Text(food.name, style = MaterialTheme.typography.bodyMedium)
                                     Text(
-                                        "${food.kcalPer100.roundToInt()} kcal/100 g",
+                                        "${food.kcalPer100.roundToInt()} kcal/100 ${food.unit.labelEs}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -444,12 +705,53 @@ private fun AddToPlanDialog(
                     }
                 }
             } else {
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text(if (selectedRecipeId != null) "Raciones" else "Cantidad (g)") },
-                    singleLine = true,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        selectedFood?.name
+                            ?: recipes.firstOrNull { it.id == selectedRecipeId }?.name.orEmpty(),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    OutlinedTextField(
+                        value = amount,
+                        onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = {
+                            Text(
+                                if (selectedRecipeId != null) {
+                                    "Raciones"
+                                } else {
+                                    "Cantidad (${(selectedFood?.unit ?: FoodUnit.G).labelEs})"
+                                },
+                            )
+                        },
+                        singleLine = true,
+                    )
+                    // Macros en vivo mientras se escribe, como en el resto de
+                    // diálogos de cantidad de la app.
+                    amount.toDoubleOrNull()?.let { value ->
+                        val macros = selectedFood?.let { food ->
+                            Macros.forGrams(
+                                value, food.kcalPer100, food.proteinPer100,
+                                food.carbsPer100, food.fatPer100,
+                            )
+                        } ?: recipes.firstOrNull { it.id == selectedRecipeId }?.let { recipe ->
+                            val per = recipe.macrosPerServing
+                            Macros(per.kcal * value, per.protein * value, per.carbs * value, per.fat * value)
+                        }
+                        macros?.let {
+                            Text(
+                                "${it.kcal.roundToInt()} kcal · P ${it.protein.roundToInt()} g · " +
+                                    "C ${it.carbs.roundToInt()} g · G ${it.fat.roundToInt()} g",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    // Vuelta a la lista sin tener que cancelar el diálogo entero.
+                    TextButton(onClick = {
+                        selectedFood = null
+                        selectedRecipeId = null
+                    }) { Text("Elegir otro") }
+                }
             }
         },
         confirmButton = {
@@ -458,7 +760,7 @@ private fun AddToPlanDialog(
                     onClick = {
                         val value = amount.toDoubleOrNull() ?: return@TextButton
                         selectedRecipeId?.let { viewModel.addRecipe(mealType, it, value) }
-                        selectedFoodId?.let { viewModel.addFood(mealType, it, value) }
+                        selectedFood?.let { viewModel.addFood(mealType, it.id, value) }
                         onDismiss()
                     },
                     enabled = amount.toDoubleOrNull() != null,

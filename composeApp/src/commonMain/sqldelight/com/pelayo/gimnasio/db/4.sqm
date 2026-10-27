@@ -1,0 +1,16 @@
+-- Los alimentos ganan searchName (nombre y marca en minúsculas y sin tildes),
+-- como ya lo tenían los ejercicios: el LIKE de SQLite no sabe de acentos y
+-- "cafe" no encontraba "Café". La migración no puede rellenarlo (quitar tildes
+-- en SQL no es posible): nace vacío y DatabaseSeeder lo completa al arrancar.
+ALTER TABLE Food ADD COLUMN searchName TEXT;
+
+-- Índices para consultas que ya se hacían con escaneo completo.
+CREATE INDEX idx_dietplanmeal_plan ON DietPlanMeal(dietPlanId);
+CREATE INDEX idx_dietplanmeal_recipe ON DietPlanMeal(recipeId);
+CREATE INDEX idx_dietplanmeal_food ON DietPlanMeal(foodId);
+CREATE INDEX idx_foodlog_recipe ON FoodLogEntry(recipeId);
+CREATE INDEX idx_foodlog_food ON FoodLogEntry(foodId);
+CREATE INDEX idx_recipe_ingredient_food ON RecipeIngredient(foodId);
+CREATE INDEX idx_recipe_name ON Recipe(name);
+CREATE INDEX idx_session_completed ON WorkoutSession(isCompleted, date);
+CREATE INDEX idx_routine_exercise_exercise ON RoutineExercise(exerciseId);

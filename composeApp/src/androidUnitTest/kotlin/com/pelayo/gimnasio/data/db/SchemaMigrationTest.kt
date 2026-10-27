@@ -115,12 +115,58 @@ class SchemaMigrationTest {
         driver.execute(null, "PRAGMA foreign_keys=ON", 0)
         val db = GimnasioDb(driver)
 
-        db.profileQueries.upsertProfile("Pelayo", "M", "1996-03-14", 178.0, 1.55, null, null)
-        db.profileQueries.insertMeasurement("2026-07-25", 80.0, null, null, null, null, null)
+        // En SQL crudo de la versión 1: la query tipada actual nombra columnas
+        // que en la base vieja aún no existen (p. ej. targetWeightKg).
+        driver.execute(
+            null,
+            "INSERT OR REPLACE INTO UserProfile(id, name, sex, birthDate, heightCm, activityFactor) " +
+                "VALUES (1, 'Pelayo', 'M', '1996-03-14', 178.0, 1.55)",
+            0,
+        )
+        driver.execute(
+            null,
+            "INSERT INTO BodyMeasurement(date, weightKg) VALUES ('2026-07-25', 80.0)",
+            0,
+        )
 
         GimnasioDb.Schema.migrate(driver, 1, GimnasioDb.Schema.version)
 
         assertEquals("Pelayo", db.profileQueries.selectProfile().executeAsOne().name)
         assertTrue(db.profileQueries.selectMeasurements().executeAsList().isNotEmpty())
+    }
+
+    @Test
+    fun el_plan_de_dieta_de_un_dia_pasa_a_ocupar_toda_la_semana() {
+        // El plan era el menú de un día suelto que se aplicaba a diario. Al hacerse
+        // semanal, ese menú se replica en los siete días para no dejar la semana
+        // medio vacía a quien ya lo tenía hecho.
+        val driver = v1Driver()
+        driver.execute(null, "PRAGMA foreign_keys=ON", 0)
+        val db = GimnasioDb(driver)
+
+        // Todo a mano: las consultas generadas ya cuentan con columnas que en la
+        // versión 1 no existen.
+        driver.execute(
+            null,
+            "INSERT INTO Food(name, kcalPer100, proteinPer100, carbsPer100, fatPer100, isCustom) " +
+                "VALUES ('Avena', 380.0, 13.0, 60.0, 7.0, 1)",
+            0,
+        )
+        val foodId = db.nutritionQueries.lastInsertRowId().executeAsOne()
+        db.nutritionQueries.insertDietPlan("Volumen", 2800.0, null, null, null, 1)
+        val planId = db.nutritionQueries.lastInsertRowId().executeAsOne()
+        driver.execute(
+            null,
+            "INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, grams) " +
+                "VALUES ($planId, 'DESAYUNO', $foodId, 120.0)",
+            0,
+        )
+
+        GimnasioDb.Schema.migrate(driver, 1, GimnasioDb.Schema.version)
+
+        val meals = db.nutritionQueries.selectMealsForDietPlan(planId).executeAsList()
+        assertEquals(7, meals.size)
+        assertEquals((1L..7L).toList(), meals.map { it.dayOfWeek }.sorted())
+        assertTrue(meals.all { it.grams == 120.0 && it.mealType == "DESAYUNO" })
     }
 }

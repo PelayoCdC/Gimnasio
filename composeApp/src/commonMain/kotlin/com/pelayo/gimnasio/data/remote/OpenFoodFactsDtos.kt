@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.data.remote
 
+import com.pelayo.gimnasio.domain.model.FoodUnit
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -48,11 +49,31 @@ data class OffProduct(
     @SerialName("image_front_small_url") val imageUrl: String? = null,
     // OFF devuelve este campo unas veces como número y otras como cadena.
     @SerialName("serving_quantity") val servingQuantity: JsonPrimitive? = null,
+    // De aquí sale si el producto se mide en gramos o en mililitros. Ninguno de los
+    // tres viene siempre, así que se miran en orden y el último recurso es el texto
+    // de la cantidad ("1 L", "500 ml").
+    @SerialName("serving_quantity_unit") val servingQuantityUnit: String? = null,
+    @SerialName("product_quantity_unit") val productQuantityUnit: String? = null,
+    val quantity: String? = null,
     val nutriments: OffNutriments = OffNutriments(),
 ) {
-    val servingSizeGrams: Double?
+    val servingSize: Double?
         get() = servingQuantity?.let { it.doubleOrNull ?: it.content.toDoubleOrNull() }
+
+    /** true si el producto es líquido y sus valores van por 100 ml. */
+    val isLiquid: Boolean
+        get() {
+            // takeIf: OFF manda muchas veces la unidad como cadena vacía, no
+            // ausente, y una vacía no debe cortar la cascada de respaldos.
+            servingQuantityUnit?.takeIf { it.isNotBlank() }?.let { return it.isLiquidUnit() }
+            productQuantityUnit?.takeIf { it.isNotBlank() }?.let { return it.isLiquidUnit() }
+            // "1 L", "500 ml", "1,5 litros": basta con la parte no numérica.
+            return quantity?.filter { it.isLetter() }?.isLiquidUnit() ?: false
+        }
 }
+
+private fun String.isLiquidUnit(): Boolean =
+    trim().lowercase() in setOf("ml", "l", "cl", "dl", "litro", "litros", "mililitros")
 
 @Serializable
 data class OffNutriments(
@@ -103,6 +124,8 @@ data class MappedFood(
     val carbsPer100: Double,
     val fatPer100: Double,
     val fiberPer100: Double?,
-    val servingSizeG: Double?,
+    /** Ración en la unidad del alimento: gramos o mililitros. */
+    val servingSize: Double?,
     val imageUrl: String?,
+    val unit: FoodUnit,
 )

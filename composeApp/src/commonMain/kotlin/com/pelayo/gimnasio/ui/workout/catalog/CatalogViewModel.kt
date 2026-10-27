@@ -56,6 +56,20 @@ class CatalogViewModel(
         viewModelScope.launch { _equipment.value = repository.equipment() }
     }
 
+    /** Da de alta un ejercicio propio y avisa con su id para poder abrirlo. */
+    fun createCustomExercise(form: CustomExerciseForm, onCreated: (Long) -> Unit = {}) {
+        viewModelScope.launch {
+            val id = repository.createCustomExercise(
+                name = form.name,
+                description = form.description,
+                exerciseType = form.exerciseType,
+                primaryGroupIds = form.primaryGroupIds,
+                secondaryGroupIds = form.secondaryGroupIds,
+            )
+            onCreated(id)
+        }
+    }
+
     fun startSync() {
         if (_syncState.value is SyncUiState.Running) return
         viewModelScope.launch {

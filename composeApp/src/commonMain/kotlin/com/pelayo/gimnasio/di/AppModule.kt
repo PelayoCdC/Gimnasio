@@ -18,6 +18,7 @@ import com.pelayo.gimnasio.ui.home.HomeViewModel
 import com.pelayo.gimnasio.ui.nutrition.DietPlanViewModel
 import com.pelayo.gimnasio.ui.nutrition.FoodDiaryViewModel
 import com.pelayo.gimnasio.ui.nutrition.FoodSearchViewModel
+import com.pelayo.gimnasio.ui.nutrition.NutritionHubViewModel
 import com.pelayo.gimnasio.ui.nutrition.RecipeEditViewModel
 import com.pelayo.gimnasio.ui.nutrition.RecipeListViewModel
 import com.pelayo.gimnasio.ui.profile.ProfileViewModel
@@ -31,6 +32,7 @@ import com.pelayo.gimnasio.ui.workout.routine.RoutineDetailViewModel
 import com.pelayo.gimnasio.ui.workout.routine.RoutineGeneratorViewModel
 import com.pelayo.gimnasio.ui.workout.routine.RoutineListViewModel
 import com.russhwolf.settings.Settings
+import kotlinx.datetime.LocalDate
 import org.koin.core.context.startKoin
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.KoinAppDeclaration
@@ -41,6 +43,7 @@ val appModule = module {
         GimnasioDb(get<DatabaseDriverFactory>().createDriver()).also { DatabaseSeeder.seed(it) }
     }
     single { Settings() }
+    single { com.pelayo.gimnasio.ui.theme.ThemeSettings(get()) }
     single { HttpClientFactory.create() }
     single { WgerApi(get()) }
     single { ExerciseRepository(get()) }
@@ -55,22 +58,23 @@ val appModule = module {
     viewModel { HomeViewModel(get(), get(), get(), get()) }
     viewModel { CatalogViewModel(get(), get()) }
     viewModel { (exerciseId: Long) -> ExerciseDetailViewModel(exerciseId, get(), get()) }
-    viewModel { RoutineListViewModel(get()) }
+    viewModel { RoutineListViewModel(get(), get()) }
     viewModel { RoutineGeneratorViewModel(get(), get()) }
-    viewModel { (routineId: Long) -> RoutineDetailViewModel(routineId, get(), get(), get()) }
+    viewModel { (routineId: Long) -> RoutineDetailViewModel(routineId, get(), get(), get(), get()) }
     viewModel { (dayId: Long, routineId: Long) ->
         ExercisePickerViewModel(dayId, routineId, get(), get())
     }
     viewModel { (sessionId: Long) -> ActiveWorkoutViewModel(sessionId, get(), get(), get()) }
     viewModel { (sessionId: Long) -> WorkoutSummaryViewModel(sessionId, get(), get()) }
-    viewModel { CalendarViewModel(get()) }
+    viewModel { CalendarViewModel(get(), get()) }
     viewModel { ProfileViewModel(get()) }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
-    viewModel { FoodDiaryViewModel(get(), get(), get()) }
+    viewModel { (initialDate: LocalDate?) -> FoodDiaryViewModel(get(), get(), get(), initialDate) }
+    viewModel { NutritionHubViewModel(get(), get()) }
     viewModel { FoodSearchViewModel(get(), get()) }
     viewModel { DietPlanViewModel(get(), get()) }
     viewModel { RecipeListViewModel(get()) }
-    viewModel { (recipeId: Long) -> RecipeEditViewModel(recipeId, get()) }
+    viewModel { (recipeId: Long) -> RecipeEditViewModel(recipeId, get(), get()) }
 }
 
 fun initKoin(config: KoinAppDeclaration? = null) {

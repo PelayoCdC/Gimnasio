@@ -92,6 +92,200 @@ class RoutineGeneratorTest {
         assertTrue(ausentes.isEmpty(), "grupos sin entrenar: $ausentes")
     }
 
+    /**
+     * Catálogo con pinta de gimnasio de verdad: nombres reales, músculos
+     * secundarios donde los hay y un par de actividades que no son de sala. El
+     * catálogo sintético de arriba tiene un compuesto perfecto por grupo y hace que
+     * cualquier reparto salga bien, así que no sirve para probar el equilibrio.
+     */
+    private fun gymCatalog(): List<CandidateExercise> {
+        nextId = 1L
+        val G = MuscleGroups
+        return listOf(
+            exercise("Press de banca con barra", G.PECHO.id, listOf(G.TRICEPS.id, G.HOMBROS.id), setOf(1L, 8L)),
+            exercise("Press inclinado con mancuernas", G.PECHO.id, listOf(G.TRICEPS.id, G.HOMBROS.id), setOf(3L, 9L)),
+            exercise("Press de pecho en maquina", G.PECHO.id, listOf(G.TRICEPS.id)),
+            exercise("Cruces en polea", G.PECHO.id),
+            exercise("Aperturas con mancuernas", G.PECHO.id, equipment = setOf(3L, 8L)),
+            exercise("Jalon al pecho", G.ESPALDA.id, listOf(G.BICEPS.id)),
+            exercise("Remo sentado en polea", G.ESPALDA.id, listOf(G.BICEPS.id)),
+            exercise("Remo con barra", G.ESPALDA.id, listOf(G.BICEPS.id), setOf(1L)),
+            exercise("Remo con mancuerna", G.ESPALDA.id, listOf(G.BICEPS.id), setOf(3L)),
+            exercise("Pullover en polea", G.ESPALDA.id),
+            exercise("Press militar en maquina", G.HOMBROS.id, listOf(G.TRICEPS.id)),
+            exercise("Press de hombros con mancuernas", G.HOMBROS.id, listOf(G.TRICEPS.id), setOf(3L)),
+            exercise("Elevaciones laterales", G.HOMBROS.id, equipment = setOf(3L)),
+            exercise("Face pull en polea", G.HOMBROS.id, listOf(G.ESPALDA.id)),
+            exercise("Curl con barra Z", G.BICEPS.id, equipment = setOf(2L)),
+            exercise("Curl con mancuernas", G.BICEPS.id, equipment = setOf(3L)),
+            exercise("Curl en polea", G.BICEPS.id),
+            exercise("Pushdown en polea", G.TRICEPS.id),
+            exercise("Extension de triceps con mancuerna", G.TRICEPS.id, equipment = setOf(3L)),
+            exercise("Fondos en maquina", G.TRICEPS.id, listOf(G.PECHO.id)),
+            exercise(
+                "Sentadilla con barra",
+                G.CUADRICEPS.id,
+                listOf(G.GLUTEOS.id, G.ISQUIOS.id, G.CORE.id),
+                setOf(1L),
+            ),
+            exercise("Prensa de piernas", G.CUADRICEPS.id, listOf(G.GLUTEOS.id)),
+            exercise("Extension de cuadriceps en maquina", G.CUADRICEPS.id),
+            exercise("Zancadas con mancuernas", G.CUADRICEPS.id, listOf(G.GLUTEOS.id), setOf(3L)),
+            exercise("Curl femoral tumbado", G.ISQUIOS.id),
+            exercise(
+                "Peso muerto rumano con mancuernas",
+                G.ISQUIOS.id,
+                listOf(G.GLUTEOS.id, G.ESPALDA.id),
+                setOf(3L),
+            ),
+            exercise("Curl femoral sentado", G.ISQUIOS.id),
+            exercise("Hip thrust en maquina", G.GLUTEOS.id, listOf(G.ISQUIOS.id)),
+            exercise("Patada de gluteo en polea", G.GLUTEOS.id),
+            exercise("Puente de gluteos", G.GLUTEOS.id, listOf(G.ISQUIOS.id)),
+            exercise("Elevacion de gemelos sentado", G.GEMELOS.id),
+            exercise("Elevacion de gemelos de pie en maquina", G.GEMELOS.id),
+            exercise("Crunch en polea", G.CORE.id),
+            exercise("Plancha", G.CORE.id),
+            exercise("Elevacion de piernas colgado", G.CORE.id, equipment = setOf(6L)),
+        )
+    }
+
+    private fun cardio(name: String, primary: Long) = CandidateExercise(
+        id = nextId++,
+        name = name,
+        primaryGroupIds = setOf(primary),
+        secondaryGroupIds = emptySet(),
+        equipmentIds = emptySet(),
+        categoryId = GymExerciseFilter.CARDIO_CATEGORY_ID,
+    )
+
+    @Test
+    fun con_tres_dias_y_sesiones_normales_la_rutina_nace_sin_avisos() {
+        // Es lo que se pedía: que la propuesta no llegue con el aviso ya puesto.
+        val catalog = gymCatalog()
+        for (level in ExperienceLevel.entries) {
+            for (minutes in listOf(60, 75, 90)) {
+                for (days in 3..6) {
+                    val routine = RoutineGenerator.generate(
+                        daysPerWeek = days,
+                        goal = RoutineGoal.HIPERTROFIA,
+                        catalog = catalog,
+                        level = level,
+                        minutesPerSession = minutes,
+                    )
+                    val report = MuscleBalanceAnalyzer.analyze(routine.volumeEntries(catalog))
+                    assertTrue(
+                        report.isBalanced,
+                        "$level, $days días de $minutes min: ${report.warnings.map { it.message }}",
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun el_reequilibrado_no_toca_el_compuesto_con_el_que_abre_cada_dia() {
+        val catalog = gymCatalog()
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            minutesPerSession = 60,
+        )
+        val byId = catalog.associateBy { it.id }
+
+        // Cada día abre con el grupo que le da nombre: el reequilibrado cambia el
+        // relleno, no el ejercicio sobre el que se monta la sesión.
+        val esperado = mapOf(
+            "Empuje" to MuscleGroups.PECHO.id,
+            "Tirón" to MuscleGroups.ESPALDA.id,
+            "Pierna" to MuscleGroups.CUADRICEPS.id,
+        )
+        routine.days.forEach { day ->
+            val first = byId.getValue(day.exerciseIds.first())
+            assertTrue(
+                esperado.getValue(day.name) in first.primaryGroupIds,
+                "el día ${day.name} abre con ${first.name}",
+            )
+        }
+    }
+
+    @Test
+    fun no_propone_ejercicios_que_no_son_de_gimnasio() {
+        nextId = 1L
+        val catalog = gymCatalog() + listOf(
+            cardio("Nadar a crol", MuscleGroups.ESPALDA.id),
+            cardio("Correr en cinta", MuscleGroups.CUADRICEPS.id),
+        ) + exercise("Saltar a la comba", MuscleGroups.GEMELOS.id)
+
+        val routine = RoutineGenerator.generate(6, RoutineGoal.HIPERTROFIA, catalog)
+
+        val byId = catalog.associateBy { it.id }
+        val names = routine.days.flatMap { it.exerciseIds }.map { byId.getValue(it).name }
+        assertTrue(names.none { it.startsWith("Nadar") }, "ha metido natación: $names")
+        assertTrue(names.none { it.startsWith("Correr") }, "ha metido carrera: $names")
+        assertTrue(names.none { it.startsWith("Saltar") }, "ha metido comba: $names")
+    }
+
+    @Test
+    fun prefiere_maquina_y_polea_antes_que_la_barra() {
+        nextId = 1L
+        // Mismo grupo y mismo carácter: solo cambia el material.
+        val barra = exercise("Remo con barra", MuscleGroups.ESPALDA.id, equipment = setOf(1L))
+        val polea = exercise("Remo sentado en polea", MuscleGroups.ESPALDA.id)
+        val routine = RoutineGenerator.generate(
+            daysPerWeek = 1,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = listOf(barra, polea),
+        )
+
+        val elegidos = routine.days.single().exerciseIds
+        assertEquals(polea.id, elegidos.first(), "debería abrir con el de polea")
+    }
+
+    @Test
+    fun las_series_elegidas_mandan_sobre_las_del_objetivo() {
+        val catalog = fullCatalog()
+        val automatica = RoutineGenerator.generate(3, RoutineGoal.HIPERTROFIA, catalog)
+        assertEquals(4, automatica.prescription.sets, "hipertrofia son 4 series por defecto")
+
+        val cinco = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            setsPerExercise = 5,
+        )
+        assertEquals(5, cinco.prescription.sets)
+        // El resto de la prescripción no se toca.
+        assertEquals(automatica.prescription.repsMin, cinco.prescription.repsMin)
+        assertEquals(automatica.prescription.restSeconds, cinco.prescription.restSeconds)
+    }
+
+    @Test
+    fun con_mas_series_caben_menos_ejercicios_en_la_misma_sesion() {
+        val catalog = fullCatalog()
+        val dos = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            minutesPerSession = 60,
+            setsPerExercise = 2,
+        )
+        val seis = RoutineGenerator.generate(
+            daysPerWeek = 3,
+            goal = RoutineGoal.HIPERTROFIA,
+            catalog = catalog,
+            minutesPerSession = 60,
+            setsPerExercise = 6,
+        )
+
+        assertTrue(
+            dos.days.first().exerciseIds.size > seis.days.first().exerciseIds.size,
+            "con 2 series salieron ${dos.days.first().exerciseIds.size} ejercicios y " +
+                "con 6 salieron ${seis.days.first().exerciseIds.size}",
+        )
+    }
+
     @Test
     fun respeta_el_material_disponible() {
         // Catálogo entero con mancuernas (id 3) salvo un ejercicio con barra (id 1).
@@ -321,5 +515,64 @@ class RoutineGeneratorTest {
         // El primer ejercicio del día de empuje es el slot de pecho compuesto.
         val firstPush = routine.days.first { it.name == "Empuje" }.exerciseIds.first()
         assertTrue(byId.getValue(firstPush).isCompound, "el primer ejercicio debería ser compuesto")
+    }
+
+    @Test
+    fun sin_el_chip_de_maquinas_no_entran_prensas_ni_jalones() {
+        // Máquinas y poleas llegan de wger sin equipamiento: solo el nombre las
+        // delata, y a quien entrena en casa con mancuernas no se le proponen.
+        val catalog = fullCatalog(equipment = setOf(3L)) +
+            exercise("Prensa de piernas", MuscleGroups.CUADRICEPS.id) +
+            exercise("Jalón al pecho", MuscleGroups.ESPALDA.id)
+
+        val home = RoutineGenerator.generate(
+            3, RoutineGoal.HIPERTROFIA, catalog,
+            availableEquipmentIds = setOf(3L),
+        )
+        val byId = catalog.associateBy { it.id }
+        val chosen = home.days.flatMap { it.exerciseIds }.map { byId.getValue(it).name }
+        assertTrue(chosen.none { it == "Prensa de piernas" || it == "Jalón al pecho" }, "$chosen")
+
+        // Con el chip sintético de máquinas la prensa vuelve a estar disponible.
+        val gym = RoutineGenerator.generate(
+            3, RoutineGoal.HIPERTROFIA, catalog,
+            availableEquipmentIds = setOf(3L, RoutineGenerator.MACHINE_EQUIPMENT_ID),
+        )
+        val gymChosen = gym.days.flatMap { it.exerciseIds }.map { byId.getValue(it).name }
+        assertTrue("Prensa de piernas" in gymChosen, "$gymChosen")
+    }
+
+    @Test
+    fun el_material_de_un_ejercicio_son_alternativas_no_un_conjunto() {
+        // Un press con {barra, banco} vale con cualquiera de los dos: exigir
+        // ambos vaciaba el catálogo de quien solo marcó banco.
+        val press = exercise("Press en banco", MuscleGroups.PECHO.id, equipment = setOf(1L, 8L))
+        val catalog = fullCatalog(equipment = setOf(8L)) + press
+
+        val routine = RoutineGenerator.generate(
+            3, RoutineGoal.HIPERTROFIA, catalog,
+            availableEquipmentIds = setOf(8L),
+        )
+        val allIds = routine.days.flatMap { it.exerciseIds }
+        // No se garantiza que lo elija, pero sí que no está excluido: lo probamos
+        // pidiendo un catálogo donde es la única opción de pecho.
+        val onlyPress = listOf(press) + fullCatalog(equipment = setOf(8L))
+            .filter { MuscleGroups.PECHO.id !in it.primaryGroupIds }
+        val forced = RoutineGenerator.generate(
+            3, RoutineGoal.HIPERTROFIA, onlyPress,
+            availableEquipmentIds = setOf(8L),
+        )
+        assertTrue(
+            forced.days.flatMap { it.exerciseIds }.contains(press.id),
+            "el press con {barra, banco} debe valer con solo banco",
+        )
+        assertTrue(allIds.isNotEmpty())
+    }
+
+    @Test
+    fun los_dias_generados_traen_dia_de_la_semana_propuesto() {
+        val routine = RoutineGenerator.generate(3, RoutineGoal.HIPERTROFIA, fullCatalog())
+        // 3 días → lunes, miércoles y viernes.
+        assertEquals(listOf(1, 3, 5), routine.days.map { it.weekday })
     }
 }

@@ -36,6 +36,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -44,10 +47,13 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.pelayo.gimnasio.domain.calc.Achievement
 import com.pelayo.gimnasio.domain.calc.NextWorkout
 import com.pelayo.gimnasio.domain.calc.StreakInfo
+import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.domain.model.CalorieBalance
 import com.pelayo.gimnasio.domain.model.formatKg
 import com.pelayo.gimnasio.domain.model.weekdayNamesEs
+import com.pelayo.gimnasio.ui.components.ConfirmDeleteDialog
 import com.pelayo.gimnasio.ui.components.GimnasioLogo
+import com.pelayo.gimnasio.util.formatDayMonthEs
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -63,10 +69,25 @@ fun HomeScreen(
     viewModel: HomeViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    var sessionToDiscard by remember { mutableStateOf<CalendarSession?>(null) }
 
     LifecycleResumeEffect(Unit) {
         viewModel.reload()
         onPauseOrDispose { }
+    }
+
+    sessionToDiscard?.let { session ->
+        ConfirmDeleteDialog(
+            title = "¿Descartar el entrenamiento?",
+            text = "Se borra la sesión de ${session.dayName} del ${session.date.formatDayMonthEs()} " +
+                "con las series que llevara apuntadas.",
+            confirmLabel = "Descartar",
+            onDismiss = { sessionToDiscard = null },
+            onConfirm = {
+                viewModel.discardUnfinished(session.sessionId)
+                sessionToDiscard = null
+            },
+        )
     }
 
     Scaffold(
@@ -119,9 +140,10 @@ fun HomeScreen(
             }
 
             // Va antes que la propuesta del día: si dejaste algo a medias, eso
-            // es lo primero que hay que resolver.
-            state.unfinished?.let { session ->
-                item {
+            // es lo primero que hay que resolver. Todas las sesiones huérfanas,
+            // no solo la más reciente.
+            state.unfinished.forEach { session ->
+                item(key = "unfinished-${session.sessionId}") {
                     Card(
                         Modifier.fillMaxWidth(),
                         colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -138,7 +160,7 @@ fun HomeScreen(
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
                             Text(
-                                "${session.dayName} · ${session.date}",
+                                "${session.dayName} · ${session.date.formatDayMonthEs()}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -146,7 +168,7 @@ fun HomeScreen(
                                 Button(onClick = { onStartWorkout(session.sessionId) }) {
                                     Text("Retomar")
                                 }
-                                OutlinedButton(onClick = viewModel::discardUnfinished) {
+                                OutlinedButton(onClick = { sessionToDiscard = session }) {
                                     Text("Descartar")
                                 }
                             }
@@ -179,13 +201,23 @@ fun HomeScreen(
                         icon = Icons.Filled.MonitorWeight,
                         label = "Peso actual",
                         value = state.latestWeight?.let { "${it.weightKg.formatKg()} kg" } ?: "—",
-                        hint = state.weightDelta?.let { delta ->
-                            when {
-                                abs(delta) < 0.05 -> "Igual que la última vez"
-                                delta > 0 -> "+${delta.formatKg()} kg desde la anterior"
-                                else -> "${delta.formatKg()} kg desde la anterior"
+                        hint = buildList {
+                            state.weightTrend?.weeklyRateKg?.let { rate ->
+                                add(
+                                    when {
+                                        abs(rate) < 0.05 -> "Estable esta semana"
+                                        rate > 0 -> "+${rate.formatKg()} kg/semana"
+                                        else -> "${rate.formatKg()} kg/semana"
+                                    },
+                                )
                             }
-                        },
+                            // La proyección solo cuando el ritmo acerca al objetivo.
+                            val projection = state.goalProjection
+                            val target = state.targetWeightKg
+                            if (projection != null && target != null) {
+                                add("${target.formatKg()} kg hacia el ${projection.formatDayMonthEs()}")
+                            }
+                        }.joinToString(" · ").takeIf { it.isNotEmpty() },
                     )
                     StatCard(
                         modifier = Modifier.weight(1f),

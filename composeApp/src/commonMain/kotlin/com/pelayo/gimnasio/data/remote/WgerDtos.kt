@@ -16,13 +16,12 @@ data class WgerLanguage(
     @SerialName("short_name") val shortName: String = "",
 )
 
+/**
+ * De los músculos solo se usa el id: el nombre en español y el grupo al que
+ * pertenece salen de la semilla estática de `WgerMappings`, que es la que manda.
+ */
 @Serializable
-data class WgerMuscleDto(
-    val id: Int,
-    val name: String = "",
-    @SerialName("name_en") val nameEn: String = "",
-    @SerialName("is_front") val isFront: Boolean = true,
-)
+data class WgerMuscleDto(val id: Int)
 
 @Serializable
 data class WgerEquipmentDto(
@@ -36,12 +35,18 @@ data class WgerCategoryDto(
     val name: String = "",
 )
 
+/** Nombre alternativo de un ejercicio: "press banca", "bench press"… */
+@Serializable
+data class WgerAliasDto(val alias: String = "")
+
 @Serializable
 data class WgerTranslationDto(
     val id: Int = 0,
     val name: String = "",
     val description: String = "",
     val language: Int,
+    /** Cada traducción trae los suyos; alimentan la búsqueda del catálogo. */
+    val aliases: List<WgerAliasDto> = emptyList(),
 )
 
 @Serializable
@@ -83,4 +88,6 @@ data class MappedExercise(
     val secondaryMuscleIds: List<Long>,
     val equipmentIds: List<Long>,
     val imageUrls: List<Pair<String, Boolean>>, // url → isMain
+    /** Nombres alternativos, en español y en inglés, para poder buscar por ellos. */
+    val aliases: List<String> = emptyList(),
 )

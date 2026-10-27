@@ -4,9 +4,6 @@
 selectCustomExercises:
 SELECT * FROM Exercise WHERE isCustom = 1;
 
-selectExerciseRef:
-SELECT id, wgerId, isCustom, nameEs FROM Exercise WHERE id = ?;
-
 selectExerciseIdByName:
 SELECT id FROM Exercise WHERE nameEs = ? AND isCustom = 1 LIMIT 1;
 
@@ -32,6 +29,24 @@ SELECT name FROM Routine WHERE id = ?;
 
 selectCustomFoods:
 SELECT * FROM Food WHERE isCustom = 1;
+
+-- Alimentos de Open Food Facts que el diario, las recetas o los planes usan de
+-- verdad. Viajan en la copia porque en una instalación limpia la caché está
+-- vacía y sin ellos esas referencias se quedarían sin resolver.
+selectReferencedOffFoods:
+SELECT DISTINCT f.*
+FROM Food f
+WHERE f.isCustom = 0 AND f.offBarcode IS NOT NULL AND f.id IN (
+    SELECT foodId FROM RecipeIngredient
+    UNION SELECT foodId FROM FoodLogEntry WHERE foodId IS NOT NULL
+    UNION SELECT foodId FROM DietPlanMeal WHERE foodId IS NOT NULL
+);
+
+-- Si el producto ya está cacheado se respeta el local, que puede ser más nuevo
+-- que el de la copia.
+insertOffFoodIfMissing:
+INSERT OR IGNORE INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt, unit, searchName)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?);
 
 selectFoodRef:
 SELECT id, offBarcode, name, isCustom FROM Food WHERE id = ?;

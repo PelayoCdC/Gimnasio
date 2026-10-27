@@ -94,4 +94,28 @@ class NextWorkoutPickerTest {
         val result = NextWorkoutPicker.pick(days, saturday, lastCompletedDayId = 10)
         assertEquals("B", assertIs<NextWorkout.NextInRotation>(result).day.name)
     }
+
+    @Test
+    fun los_dias_sin_asignar_rotan_aunque_otros_tengan_dia_fijo() {
+        // El caso mixto: antes los días sin weekday desaparecían para siempre en
+        // cuanto cualquier otro sí lo tenía.
+        val days = listOf(
+            day(1, 0, "Lunes fijo", weekday = 1),
+            day(2, 1, "Libre A"),
+            day(3, 2, "Libre B"),
+        )
+        // El sábado no toca el fijo: se propone el libre que sigue en rotación.
+        val result = NextWorkoutPicker.pick(days, saturday, lastCompletedDayId = 2)
+        assertEquals("Libre B", assertIs<NextWorkout.NextInRotation>(result).day.name)
+    }
+
+    @Test
+    fun el_dia_fijo_sigue_mandando_cuando_hoy_le_toca() {
+        val days = listOf(
+            day(1, 0, "Sábado fijo", weekday = 6),
+            day(2, 1, "Libre"),
+        )
+        val result = NextWorkoutPicker.pick(days, saturday, null)
+        assertEquals("Sábado fijo", assertIs<NextWorkout.Scheduled>(result).day.name)
+    }
 }

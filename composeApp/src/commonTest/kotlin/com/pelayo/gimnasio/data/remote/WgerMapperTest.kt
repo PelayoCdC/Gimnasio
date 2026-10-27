@@ -32,13 +32,19 @@ class WgerMapperTest {
               "id": 1060,
               "name": "Bench Press",
               "description": "<p>Lie on the bench.</p><p>Lower the bar slowly.</p>",
-              "language": 2
+              "language": 2,
+              "aliases": [
+                { "id": 9, "uuid": "b0f1", "alias": "Barbell Bench Press" },
+                { "id": 10, "uuid": "b0f2", "alias": "Flat Bench Press" }
+              ],
+              "notes": []
             },
             {
               "id": 2087,
               "name": "Press de banca",
               "description": "<p>Túmbate en el banco.</p><ul><li>Baja la barra</li><li>Empuja</li></ul>",
-              "language": 4
+              "language": 4,
+              "aliases": [ { "id": 11, "uuid": "b0f3", "alias": "Press banca plano" } ]
             }
           ],
           "images": [
@@ -75,6 +81,19 @@ class WgerMapperTest {
         assertEquals(2, mapped.imageUrls.size)
         assertTrue(mapped.imageUrls.first().second) // primera es is_main
         assertEquals("https://wger.de/media/exercise-video/345.mp4", mapped.videoUrl)
+    }
+
+    @Test
+    fun recoge_los_alias_de_las_dos_traducciones() {
+        // Es lo que la gente teclea: "press banca" en vez del nombre completo.
+        val dto = json.decodeFromString<WgerPage<WgerExerciseInfoDto>>(fixture).results.single()
+
+        val mapped = WgerMapper.map(dto, spanishLangId = 4, englishLangId = 2)!!
+
+        assertEquals(
+            listOf("Press banca plano", "Barbell Bench Press", "Flat Bench Press"),
+            mapped.aliases,
+        )
     }
 
     @Test

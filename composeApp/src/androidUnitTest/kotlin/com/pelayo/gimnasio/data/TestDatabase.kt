@@ -2,6 +2,7 @@ package com.pelayo.gimnasio.data
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.pelayo.gimnasio.data.db.DatabaseSeeder
+import com.pelayo.gimnasio.data.db.WgerMappings
 import com.pelayo.gimnasio.db.GimnasioDb
 
 /**
@@ -26,7 +27,9 @@ fun GimnasioDb.insertTestExercise(
     name: String,
     primaryMuscleIds: List<Long>,
     secondaryMuscleIds: List<Long> = emptyList(),
-    exerciseType: String = "REPS",
+    // Igual que al sincronizar con wger: el tipo lo decide el nombre, así que una
+    // plancha entra como ejercicio de tiempo sin tener que decirlo aquí.
+    exerciseType: String = WgerMappings.exerciseTypeFor(name, categoryId = null),
     metValue: Double = 3.5,
     imageUrls: List<Pair<String, Boolean>> = emptyList(),
 ): Long {

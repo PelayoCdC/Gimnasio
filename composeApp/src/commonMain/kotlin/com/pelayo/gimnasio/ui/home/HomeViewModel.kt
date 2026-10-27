@@ -12,6 +12,8 @@ import com.pelayo.gimnasio.domain.calc.NextWorkoutPicker
 import com.pelayo.gimnasio.domain.calc.ScheduledDay
 import com.pelayo.gimnasio.domain.calc.StreakCalculator
 import com.pelayo.gimnasio.domain.calc.StreakInfo
+import com.pelayo.gimnasio.domain.calc.WeightTrend
+import com.pelayo.gimnasio.domain.calc.WeightTrendCalculator
 import com.pelayo.gimnasio.domain.model.BodyMeasurementEntry
 import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.domain.model.CalorieBalance
@@ -19,6 +21,7 @@ import com.pelayo.gimnasio.util.today
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDate
 
 data class HomeState(
     val loading: Boolean = true,
@@ -26,16 +29,19 @@ data class HomeState(
     val nextWorkout: NextWorkout = NextWorkout.NoRoutine,
     val balance: CalorieBalance? = null,
     val latestWeight: BodyMeasurementEntry? = null,
-    /** Diferencia con la medición anterior; null si solo hay una. */
-    val weightDelta: Double? = null,
+    /** Tendencia (media móvil de 7 días); null sin pesajes esta semana. */
+    val weightTrend: WeightTrend? = null,
+    /** Peso objetivo del perfil y fecha estimada de llegada al ritmo actual. */
+    val targetWeightKg: Double? = null,
+    val goalProjection: LocalDate? = null,
     val completedSessions: Long = 0,
     val catalogEmpty: Boolean = true,
     val profileIncomplete: Boolean = true,
     val streak: StreakInfo? = null,
     /** Logros recién alcanzados, para celebrarlos en la portada. */
     val latestAchievement: Achievement? = null,
-    /** Entrenamiento empezado y sin cerrar; si no se ofrece, se queda atascado. */
-    val unfinished: CalendarSession? = null,
+    /** Entrenamientos empezados y sin cerrar; si no se ofrecen, se quedan atascados. */
+    val unfinished: List<CalendarSession> = emptyList(),
 )
 
 class HomeViewModel(
@@ -71,11 +77,20 @@ class HomeViewModel(
 
             val metrics = profileRepository.currentMetrics()
             val measurements = profileRepository.measurements()
+            val profile = profileRepository.profile()
+            val trend = WeightTrendCalculator.calculate(
+                entries = measurements.map { it.date to it.weightKg },
+                today = date,
+            )
 
+            val completedCount = workoutRepository.completedSessionCount()
             val streak = StreakCalculator.calculate(
                 sessionDates = workoutRepository.completedSessionDates(),
                 today = date,
                 weeklyTarget = activeRoutine?.days?.size ?: 0,
+                // El total real, no las fechas distintas: dos sesiones el mismo día
+                // hacían que los logros fueran por detrás del contador de la portada.
+                totalSessions = completedCount.toInt(),
             )
             val achievements = StreakCalculator.achievements(streak)
 
@@ -89,17 +104,26 @@ class HomeViewModel(
                     exerciseKcal = workoutRepository.kcalBurnedOn(date),
                 ),
                 latestWeight = measurements.firstOrNull(),
-                weightDelta = if (measurements.size >= 2) {
-                    measurements[0].weightKg - measurements[1].weightKg
-                } else {
-                    null
+                // Media móvil, no "las dos últimas mediciones": el peso diario
+                // oscila por agua, y la anterior podía ser de hace meses.
+                weightTrend = trend,
+                targetWeightKg = profile?.targetWeightKg,
+                goalProjection = trend?.let {
+                    WeightTrendCalculator.projectedDate(
+                        currentKg = it.averageKg,
+                        targetKg = profile?.targetWeightKg,
+                        weeklyRateKg = it.weeklyRateKg,
+                        today = date,
+                    )
                 },
-                completedSessions = workoutRepository.completedSessionCount(),
+                completedSessions = completedCount,
                 catalogEmpty = routineRepository.isCatalogEmpty(),
                 profileIncomplete = metrics == null,
                 streak = streak,
                 latestAchievement = achievements.lastOrNull { it.unlocked },
-                unfinished = workoutRepository.unfinishedSessions().firstOrNull(),
+                // Todas, no solo la primera: dos sesiones huérfanas eran una visible
+                // y otra atascada sin ninguna vía de retomarse o descartarse.
+                unfinished = workoutRepository.unfinishedSessions(),
             )
         }
     }
@@ -109,8 +133,7 @@ class HomeViewModel(
         viewModelScope.launch { onStarted(workoutRepository.startSession(dayId)) }
     }
 
-    fun discardUnfinished() {
-        val sessionId = _state.value.unfinished?.sessionId ?: return
+    fun discardUnfinished(sessionId: Long) {
         viewModelScope.launch {
             workoutRepository.deleteSession(sessionId)
             reload()

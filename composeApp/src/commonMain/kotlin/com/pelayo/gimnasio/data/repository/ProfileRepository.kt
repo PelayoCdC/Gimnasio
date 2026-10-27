@@ -34,6 +34,7 @@ class ProfileRepository(
                     ?: ActivityLevel.LIGERO,
                 goal = row.goal,
                 targetKcalOverride = row.targetKcalOverride,
+                targetWeightKg = row.targetWeightKg,
             )
         }
     }
@@ -47,6 +48,7 @@ class ProfileRepository(
             activityFactor = profile.activityLevel.factor,
             goal = profile.goal,
             targetKcalOverride = profile.targetKcalOverride,
+            targetWeightKg = profile.targetWeightKg,
         )
     }
 
@@ -64,15 +66,19 @@ class ProfileRepository(
     ) = withContext(dispatcher) {
         val profile = profile()
         val height = profile?.heightCm
-        val age = profile?.birthDate?.ageOn(date)
+        val age = profile?.birthDate?.ageOn(date)?.takeIf { it > 0 }
 
-        val bodyFat = if (height != null && age != null) {
+        // El método Marina no necesita la edad: solo la estimación por IMC
+        // (Deurenberg) la usa, así que sin fecha de nacimiento la cinta sigue valiendo.
+        val bodyFat = if (profile != null && height != null) {
             BodyMetricsCalculator.bodyFatNavy(profile.sex, height, neckCm, waistCm, hipCm)
-                ?: BodyMetricsCalculator.bodyFatDeurenberg(
-                    BodyMetricsCalculator.bmi(weightKg, height),
-                    age,
-                    profile.sex,
-                )
+                ?: age?.let {
+                    BodyMetricsCalculator.bodyFatDeurenberg(
+                        BodyMetricsCalculator.bmi(weightKg, height),
+                        it,
+                        profile.sex,
+                    )
+                }
         } else {
             null
         }
@@ -90,22 +96,26 @@ class ProfileRepository(
         q.selectLatestMeasurement().executeAsOneOrNull()?.toEntry()
     }
 
-    /** Métricas derivadas del perfil y la última medición; null si faltan datos básicos. */
+    /**
+     * Métricas derivadas del perfil y la última medición; null si faltan la
+     * altura o el peso. Sin fecha de nacimiento se calcula lo que se puede (IMC
+     * y grasa por cinta) y la TMB/TDEE quedan a null.
+     */
     suspend fun currentMetrics(): BodyMetrics? = withContext(dispatcher) {
         val profile = profile() ?: return@withContext null
         val height = profile.heightCm ?: return@withContext null
-        val birthDate = profile.birthDate ?: return@withContext null
         val measurement = latestMeasurement() ?: return@withContext null
 
-        val age = birthDate.ageOn(today())
-        if (age <= 0) return@withContext null
+        val age = profile.birthDate?.ageOn(today())?.takeIf { it > 0 }
 
         val bmi = BodyMetricsCalculator.bmi(measurement.weightKg, height)
         val navy = BodyMetricsCalculator.bodyFatNavy(
             profile.sex, height, measurement.neckCm, measurement.waistCm, measurement.hipCm,
         )
-        val bodyFat = navy ?: BodyMetricsCalculator.bodyFatDeurenberg(bmi, age, profile.sex)
-        val bmr = BodyMetricsCalculator.bmrMifflinStJeor(measurement.weightKg, height, age, profile.sex)
+        val bodyFat = navy ?: age?.let { BodyMetricsCalculator.bodyFatDeurenberg(bmi, it, profile.sex) }
+        val bmr = age?.let {
+            BodyMetricsCalculator.bmrMifflinStJeor(measurement.weightKg, height, it, profile.sex)
+        }
 
         BodyMetrics(
             ageYears = age,
@@ -114,9 +124,13 @@ class ProfileRepository(
             bmi = bmi,
             bmiCategory = BodyMetricsCalculator.bmiCategory(bmi),
             bodyFatPercent = bodyFat,
-            bodyFatMethod = if (navy != null) BodyFatMethod.NAVY else BodyFatMethod.DEURENBERG,
+            bodyFatMethod = when {
+                navy != null -> BodyFatMethod.NAVY
+                bodyFat != null -> BodyFatMethod.DEURENBERG
+                else -> null
+            },
             bmr = bmr,
-            tdee = BodyMetricsCalculator.tdee(bmr, profile.activityLevel.factor),
+            tdee = bmr?.let { BodyMetricsCalculator.tdee(it, profile.activityLevel.factor) },
         )
     }
 }

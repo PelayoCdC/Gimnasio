@@ -48,4 +48,13 @@ class ExerciseComplexityClassifierTest {
         assertEquals(ExerciseComplexity.INTERMEDIO, classify("Peso muerto con mancuernas", setOf(3L)))
         assertEquals(ExerciseComplexity.INTERMEDIO, classify("Fondos en paralelas"))
     }
+
+    @Test
+    fun el_agarre_supino_no_convierte_nada_en_avanzado() {
+        // "pino" vivía dentro de "supino" y vetaba estos ejercicios a principiantes.
+        assertEquals(ExerciseComplexity.BASICO, classify("Curl con agarre supino", setOf(3L)))
+        assertEquals(ExerciseComplexity.BASICO, classify("Jalón con agarre supino"))
+        // El pino de verdad sigue siendo avanzado.
+        assertEquals(ExerciseComplexity.AVANZADO, classify("Flexiones haciendo el pino"))
+    }
 }

@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.ui.workout
 
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -8,6 +9,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
+import androidx.test.core.app.ApplicationProvider
 import com.pelayo.gimnasio.data.createTestDatabase
 import com.pelayo.gimnasio.data.insertTestExercise
 import com.pelayo.gimnasio.data.repository.ExerciseRepository
@@ -15,6 +18,7 @@ import com.pelayo.gimnasio.data.repository.RoutineRepository
 import com.pelayo.gimnasio.data.repository.WorkoutRepository
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.model.RoutineGoal
+import com.pelayo.gimnasio.platform.FileTransfer
 import com.pelayo.gimnasio.ui.workout.routine.RoutineDetailScreen
 import com.pelayo.gimnasio.ui.workout.routine.RoutineDetailViewModel
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +89,8 @@ class RoutineDetailScreenTest {
             repository = routines,
             workoutRepository = WorkoutRepository(db, Dispatchers.Unconfined),
             exerciseRepository = exercises,
+            // Sin Activity viva, guardar devuelve false: aquí no se prueba exportar.
+            fileTransfer = FileTransfer(ApplicationProvider.getApplicationContext()),
         )
         compose.setContent {
             RoutineDetailScreen(
@@ -100,6 +106,24 @@ class RoutineDetailScreenTest {
 
     private fun scrollTo(text: String) {
         compose.onNode(hasScrollAction()).performScrollToNode(hasText(text, substring = true))
+    }
+
+    @Test
+    fun se_puede_cambiar_el_nombre_y_el_objetivo_de_la_rutina() {
+        // El ViewModel ya sabía renombrar, pero no había manera de llegar hasta él.
+        showScreen()
+
+        compose.onNodeWithContentDescription("Editar rutina").performClick()
+        // Por el texto no vale: "Rutina A" también está en el título de la pantalla.
+        compose.onNode(hasSetTextAction()).performTextReplacement("Torso y pierna")
+        compose.onNodeWithText("Fuerza").performClick()
+        compose.onNodeWithText("Guardar").performClick()
+
+        val routine = runBlocking { assertNotNull(routines.routineDetail(routineId)) }
+        assertEquals("Torso y pierna", routine.name)
+        assertEquals(RoutineGoal.FUERZA, routine.goal)
+        // Cambiar el objetivo no rehace lo que ya estaba puesto.
+        assertEquals(1, routine.days.single().exercises.size)
     }
 
     @Test

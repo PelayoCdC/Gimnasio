@@ -44,17 +44,24 @@ object NextWorkoutPicker {
         if (scheduled.isNotEmpty()) {
             val todayWeekday = today.dayOfWeek.isoDayNumber
             val match = scheduled.firstOrNull { it.weekday == todayWeekday }
-            return if (match != null) {
-                NextWorkout.Scheduled(match)
-            } else {
-                NextWorkout.RestDay(nextScheduledAfter(scheduled, todayWeekday))
+            if (match != null) return NextWorkout.Scheduled(match)
+
+            // Los días sin asignar no desaparecen por que otros sí lo estén: si hoy
+            // no toca ninguno fijo, se proponen en rotación, como en una rutina flexible.
+            val flexible = ordered.filter { it.weekday == null }
+            if (flexible.isEmpty()) {
+                return NextWorkout.RestDay(nextScheduledAfter(scheduled, todayWeekday))
             }
+            return NextWorkout.NextInRotation(nextInRotation(flexible, lastCompletedDayId))
         }
 
         // Rotación libre: el siguiente al último completado, volviendo al principio.
-        val lastIndex = ordered.indexOfFirst { it.id == lastCompletedDayId }
-        val next = if (lastIndex == -1) ordered.first() else ordered[(lastIndex + 1) % ordered.size]
-        return NextWorkout.NextInRotation(next)
+        return NextWorkout.NextInRotation(nextInRotation(ordered, lastCompletedDayId))
+    }
+
+    private fun nextInRotation(days: List<ScheduledDay>, lastCompletedDayId: Long?): ScheduledDay {
+        val lastIndex = days.indexOfFirst { it.id == lastCompletedDayId }
+        return if (lastIndex == -1) days.first() else days[(lastIndex + 1) % days.size]
     }
 
     /** Siguiente día asignado de la semana, mirando hacia delante y dando la vuelta. */

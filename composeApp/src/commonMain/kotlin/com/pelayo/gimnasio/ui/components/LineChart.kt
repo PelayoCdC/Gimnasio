@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,12 +12,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.roundToInt
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.pelayo.gimnasio.util.oneDecimal
 
 /**
  * Gráfica de línea sencilla sobre Canvas: un punto por valor, escala automática.
@@ -38,21 +48,44 @@ fun LineChart(
     val range = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
     val gridColor = MaterialTheme.colorScheme.surfaceVariant
 
-    Column(modifier) {
+    // El Canvas es invisible para el lector de pantalla; esto resume lo que pinta.
+    val chartDescription = "Gráfica: de ${values.first().oneDecimal()}$unit a " +
+        "${values.last().oneDecimal()}$unit en ${values.size} registros"
+
+    // Punto seleccionado con un toque; volver a tocarlo lo quita. Sin esto la
+    // gráfica era decorativa: no había forma de leer un valor concreto.
+    var selected by remember(values) { mutableStateOf<Int?>(null) }
+
+    Column(modifier.semantics { contentDescription = chartDescription }) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
-                "${maxValue.trim()}$unit",
+                "${maxValue.oneDecimal()}$unit",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "${minValue.trim()}$unit",
+                "${minValue.oneDecimal()}$unit",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Box(Modifier.fillMaxWidth().height(160.dp).padding(vertical = 8.dp)) {
-            Canvas(Modifier.fillMaxWidth().height(144.dp)) {
+            Canvas(
+                Modifier
+                    .fillMaxWidth()
+                    .height(144.dp)
+                    .pointerInput(values) {
+                        detectTapGestures { offset ->
+                            val index = if (values.size <= 1) {
+                                0
+                            } else {
+                                val stepX = size.width / (values.size - 1f)
+                                (offset.x / stepX).roundToInt().coerceIn(0, values.lastIndex)
+                            }
+                            selected = if (selected == index) null else index
+                        }
+                    },
+            ) {
                 val w = size.width
                 val h = size.height
                 val stepX = if (values.size > 1) w / (values.size - 1) else 0f
@@ -93,7 +126,29 @@ fun LineChart(
                 values.indices.forEach { index ->
                     drawCircle(color = lineColor, radius = 6f, center = pointAt(index))
                 }
+
+                // Anillo sobre el punto elegido, para saber de cuál se habla.
+                selected?.let { index ->
+                    drawCircle(
+                        color = lineColor,
+                        radius = 12f,
+                        center = pointAt(index),
+                        style = Stroke(width = 3f),
+                    )
+                }
             }
+        }
+
+        selected?.let { index ->
+            val label = labels.getOrNull(index)?.takeIf { it.isNotBlank() }
+            Text(
+                buildString {
+                    label?.let { append("$it: ") }
+                    append("${values[index].oneDecimal()}$unit")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         if (labels.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -114,5 +169,3 @@ fun LineChart(
     }
 }
 
-private fun Double.trim(): String =
-    if (this == toLong().toDouble()) toLong().toString() else ((this * 10).toLong() / 10.0).toString()

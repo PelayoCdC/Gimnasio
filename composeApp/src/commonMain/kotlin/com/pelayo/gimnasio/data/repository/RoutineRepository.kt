@@ -2,6 +2,7 @@ package com.pelayo.gimnasio.data.repository
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import com.pelayo.gimnasio.data.backup.RoutineMarkdown
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.calc.BalanceReport
 import com.pelayo.gimnasio.domain.calc.GeneratedRoutine
@@ -13,13 +14,16 @@ import com.pelayo.gimnasio.domain.model.RoutineDayInfo
 import com.pelayo.gimnasio.domain.model.RoutineDetail
 import com.pelayo.gimnasio.domain.model.RoutineExerciseItem
 import com.pelayo.gimnasio.domain.model.RoutineGoal
+import com.pelayo.gimnasio.domain.model.RoutineImportResult
 import com.pelayo.gimnasio.domain.model.RoutineSummary
 import com.pelayo.gimnasio.domain.model.TrainingPrescription
+import com.pelayo.gimnasio.util.normalizeForSearch
 import com.pelayo.gimnasio.util.nowIsoString
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -31,19 +35,22 @@ class RoutineRepository(
 
     fun routines(): Flow<List<RoutineSummary>> =
         q.selectAllRoutines().asFlow().mapToList(dispatcher).map { rows ->
+            val counts = q.countRoutineContents().executeAsList().associateBy { it.routineId }
             rows.map { routine ->
-                val days = q.selectDaysForRoutine(routine.id).executeAsList()
                 RoutineSummary(
                     id = routine.id,
                     name = routine.name,
                     description = routine.description,
                     goal = RoutineGoal.valueOf(routine.goal),
                     isActive = routine.isActive == 1L,
-                    dayCount = days.size,
-                    exerciseCount = days.sumOf { q.selectExercisesForDay(it.id).executeAsList().size },
+                    dayCount = counts[routine.id]?.dayCount?.toInt() ?: 0,
+                    exerciseCount = counts[routine.id]?.exerciseCount?.toInt() ?: 0,
                 )
             }
         }
+            // Sin esto, el map de arriba (que consulta la DB) corre en el contexto
+            // del colector, que es el hilo principal.
+            .flowOn(dispatcher)
 
     suspend fun createRoutine(
         name: String,
@@ -89,22 +96,31 @@ class RoutineRepository(
         withContext(dispatcher) {
             db.transaction {
                 val position = q.selectExercisesForDay(dayId).executeAsList().size.toLong()
-                val exercise = db.catalogQueries.selectExerciseById(exerciseId).executeAsOne()
-                val isTimed = exercise.exerciseType == ExerciseType.TIME.name
-                q.insertRoutineExercise(
-                    routineDayId = dayId,
-                    exerciseId = exerciseId,
-                    position = position,
-                    targetSets = p.sets.toLong(),
-                    targetRepsMin = if (isTimed) null else p.repsMin.toLong(),
-                    targetRepsMax = if (isTimed) null else p.repsMax.toLong(),
-                    targetTimeSeconds = if (isTimed) 60L else null,
-                    targetWeight = null,
-                    restSeconds = p.restSeconds.toLong(),
-                    notes = null,
-                )
+                insertExerciseRow(dayId, exerciseId, position, p)
             }
         }
+
+    /**
+     * Inserta la fila de un ejercicio con su prescripción. Para llamar dentro de
+     * una transacción ya abierta. Si el ejercicio ya no existe (borrado con la
+     * pantalla abierta), no inserta nada en vez de reventar.
+     */
+    private fun insertExerciseRow(dayId: Long, exerciseId: Long, position: Long, p: TrainingPrescription) {
+        val exercise = db.catalogQueries.selectExerciseById(exerciseId).executeAsOneOrNull() ?: return
+        val isTimed = exercise.exerciseType == ExerciseType.TIME.name
+        q.insertRoutineExercise(
+            routineDayId = dayId,
+            exerciseId = exerciseId,
+            position = position,
+            targetSets = p.sets.toLong(),
+            targetRepsMin = if (isTimed) null else p.repsMin.toLong(),
+            targetRepsMax = if (isTimed) null else p.repsMax.toLong(),
+            targetTimeSeconds = if (isTimed) 60L else null,
+            targetWeight = null,
+            restSeconds = p.restSeconds.toLong(),
+            notes = null,
+        )
+    }
 
     suspend fun updateRoutineExercise(
         id: Long,
@@ -185,6 +201,21 @@ class RoutineRepository(
             }
         }
     }
+
+    /**
+     * Aplica de una vez el orden que dejó el arrastre: una escritura por fila en
+     * una sola transacción, en vez de un baile de ±1 por cada posición cruzada.
+     * Los ids que no estén en la lista (carrera con un borrado) se ignoran.
+     */
+    suspend fun reorderRoutineExercises(dayId: Long, orderedIds: List<Long>) =
+        withContext(dispatcher) {
+            db.transaction {
+                val current = q.selectExercisesForDay(dayId).executeAsList().map { it.id }.toSet()
+                orderedIds.filter { it in current }.forEachIndexed { position, id ->
+                    q.updateRoutineExercisePosition(position.toLong(), id)
+                }
+            }
+        }
 
     /** Reasigna posiciones 0..n-1 respetando el orden actual. */
     private fun renumber(dayId: Long) {
@@ -348,23 +379,161 @@ class RoutineRepository(
         db.catalogQueries.countExercises().executeAsOne() == 0L
     }
 
-    /** Persiste una rutina propuesta por el generador y devuelve su id. */
+    /**
+     * Persiste una rutina propuesta por el generador y devuelve su id. Todo en
+     * una transacción: un fallo (o cerrar la pantalla) a mitad no debe dejar una
+     * rutina a medio construir que haya que limpiar a mano.
+     */
     suspend fun saveGenerated(generated: GeneratedRoutine): Long = withContext(dispatcher) {
-        val routineId = createRoutine(
-            name = generated.name,
-            description = generated.description,
-            goal = generated.goal,
-            isGenerated = true,
-        )
-        generated.days.forEachIndexed { index, day ->
-            val dayId = addDay(routineId, day.name, weekday = null)
-            day.exerciseIds.forEach { exerciseId ->
-                addExerciseToDay(dayId, exerciseId, generated.prescription)
+        db.transactionWithResult {
+            q.insertRoutine(
+                generated.name, generated.description, generated.goal.name,
+                nowIsoString(), 0, 1,
+            )
+            val routineId = db.catalogQueries.lastInsertRowId().executeAsOne()
+            if (q.selectAllRoutines().executeAsList().size == 1) q.setActiveRoutine(routineId)
+            generated.days.forEachIndexed { index, day ->
+                q.insertRoutineDay(routineId, index.toLong(), day.name, day.weekday?.toLong())
+                val dayId = db.catalogQueries.lastInsertRowId().executeAsOne()
+                day.exerciseIds.forEachIndexed { position, exerciseId ->
+                    insertExerciseRow(dayId, exerciseId, position.toLong(), generated.prescription)
+                }
             }
-            // dayIndex ya lo asigna addDay por orden de inserción.
-            check(index >= 0)
+            routineId
         }
-        routineId
+    }
+
+    /**
+     * Pone las mismas series a todos los ejercicios de la rutina. Es un ajuste de
+     * brocha gorda a propósito: se elige de una vez y luego se retoca el ejercicio
+     * que lo necesite.
+     */
+    suspend fun setSetsForRoutine(routineId: Long, sets: Int) = withContext(dispatcher) {
+        db.transaction {
+            q.selectDaysForRoutine(routineId).executeAsList().forEach { day ->
+                q.updateSetsForDay(sets.toLong(), day.id)
+            }
+        }
+    }
+
+    /** La rutina en Markdown, lista para compartir o para dársela a un agente. */
+    suspend fun exportRoutineMarkdown(routineId: Long): String? = withContext(dispatcher) {
+        routineDetail(routineId)?.let { RoutineMarkdown.export(it) }
+    }
+
+    /**
+     * Crea una rutina a partir del texto. Nunca sobreescribe una existente: si el
+     * nombre choca, se desambigua, porque lo que llega de fuera no debería poder
+     * pisar lo que el usuario ya tiene.
+     *
+     * Los ejercicios se reconocen por nombre contra el catálogo local (normalizado,
+     * en español o en inglés, y con una pasada por "contiene" para los nombres
+     * ligeramente distintos). Lo que no se reconoce se salta y se cuenta.
+     */
+    suspend fun importRoutineMarkdown(text: String): RoutineImportResult? = withContext(dispatcher) {
+        val parsed = RoutineMarkdown.parse(text) ?: return@withContext null
+
+        val catalog = db.catalogQueries.selectExerciseNames().executeAsList()
+        val byName = mutableMapOf<String, ExerciseMatch>()
+        // El primero que reclama un nombre se lo queda: `putIfAbsent` no existe en
+        // el código común, solo en la JVM.
+        fun claim(name: String, match: ExerciseMatch) {
+            if (name.isNotBlank() && name !in byName) byName[name] = match
+        }
+        catalog.forEach { row ->
+            val match = ExerciseMatch(row.id, row.exerciseType == ExerciseType.TIME.name)
+            claim(row.searchName ?: normalizeForSearch(row.nameEs), match)
+            claim(normalizeForSearch(row.nameEs), match)
+            row.nameEn?.let { claim(normalizeForSearch(it), match) }
+        }
+
+        val prescription = TrainingPrescription.forGoal(parsed.goal)
+        val skipped = mutableListOf<String>()
+        var imported = 0
+
+        // Una sola transacción para toda la rutina: un fallo a mitad no debe
+        // dejar media rutina importada.
+        val routineId = db.transactionWithResult {
+            val existing = q.selectAllRoutines().executeAsList().map { it.name }.toSet()
+            q.insertRoutine(
+                uniqueName(parsed.name, existing), parsed.description, parsed.goal.name,
+                nowIsoString(), 0, 0,
+            )
+            val routineId = db.catalogQueries.lastInsertRowId().executeAsOne()
+            if (q.selectAllRoutines().executeAsList().size == 1) q.setActiveRoutine(routineId)
+
+            parsed.days.forEachIndexed { dayIndex, day ->
+                q.insertRoutineDay(routineId, dayIndex.toLong(), day.name, day.weekday?.toLong())
+                val dayId = db.catalogQueries.lastInsertRowId().executeAsOne()
+                var position = 0L
+                day.exercises.forEach { exercise ->
+                    val match = findExercise(exercise.name, byName)
+                    if (match == null) {
+                        skipped += exercise.name
+                        return@forEach
+                    }
+                    val isTimed = match.isTimed || exercise.timeSeconds != null
+                    val sets = exercise.sets ?: prescription.sets
+                    val repsMin = exercise.repsMin ?: prescription.repsMin
+                    val repsMax = exercise.repsMax ?: prescription.repsMax
+                    q.insertRoutineExercise(
+                        routineDayId = dayId,
+                        exerciseId = match.id,
+                        position = position,
+                        targetSets = sets.toLong(),
+                        targetRepsMin = if (isTimed) null else repsMin.toLong(),
+                        targetRepsMax = if (isTimed) null else repsMax.toLong(),
+                        targetTimeSeconds = if (isTimed) {
+                            (exercise.timeSeconds ?: 60).toLong()
+                        } else {
+                            null
+                        },
+                        targetWeight = exercise.weightKg,
+                        restSeconds = (exercise.restSeconds ?: prescription.restSeconds).toLong(),
+                        notes = exercise.notes,
+                    )
+                    position++
+                    imported++
+                }
+            }
+            routineId
+        }
+
+        RoutineImportResult(
+            routineId = routineId,
+            name = parsed.name,
+            days = parsed.days.size,
+            exercises = imported,
+            skippedExercises = skipped,
+        )
+    }
+
+    private data class ExerciseMatch(val id: Long, val isTimed: Boolean)
+
+    /**
+     * Busca por nombre exacto normalizado y, si no lo encuentra, por el nombre
+     * más parecido que lo contenga: un agente puede escribir "Press banca" donde el
+     * catálogo dice "Press de banca con barra".
+     */
+    private fun findExercise(name: String, byName: Map<String, ExerciseMatch>): ExerciseMatch? {
+        val normalized = normalizeForSearch(name)
+        if (normalized.isBlank()) return null
+        byName[normalized]?.let { return it }
+        // De los candidatos por "contiene" gana el de longitud más parecida (el
+        // más específico), y se exige un solapamiento mínimo del 60 %: "Remo con
+        // barra a una mano" no debe caer en un escueto "Remo".
+        return byName.entries
+            .filter { it.key.contains(normalized) || normalized.contains(it.key) }
+            .filter { minOf(it.key.length, normalized.length) * 10 >= maxOf(it.key.length, normalized.length) * 6 }
+            .minByOrNull { kotlin.math.abs(it.key.length - normalized.length) }
+            ?.value
+    }
+
+    private fun uniqueName(name: String, existing: Set<String>): String {
+        if (name !in existing) return name
+        var index = 2
+        while ("$name ($index)" in existing) index++
+        return "$name ($index)"
     }
 
     /** Volumen semanal de la rutina agregado por grupo muscular, con sus avisos. */

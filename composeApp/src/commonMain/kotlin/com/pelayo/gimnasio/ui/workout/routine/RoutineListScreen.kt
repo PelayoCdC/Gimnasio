@@ -20,8 +20,9 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import com.pelayo.gimnasio.ui.components.TagChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedButton
@@ -59,6 +60,7 @@ fun RoutineListScreen(
     viewModel: RoutineListViewModel = koinViewModel(),
 ) {
     val routines by viewModel.routines.collectAsState()
+    val importState by viewModel.importState.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var routineToDelete by remember { mutableStateOf<RoutineSummary?>(null) }
 
@@ -69,6 +71,14 @@ fun RoutineListScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = viewModel::importRoutine,
+                        enabled = importState !is RoutineImportUiState.Working,
+                    ) {
+                        Icon(Icons.Filled.FileUpload, contentDescription = "Importar rutina")
                     }
                 },
             )
@@ -146,6 +156,47 @@ fun RoutineListScreen(
             },
         )
     }
+
+    when (val state = importState) {
+        is RoutineImportUiState.Done -> AlertDialog(
+            onDismissRequest = viewModel::dismissImportMessage,
+            title = { Text("Rutina importada") },
+            text = {
+                Text(
+                    buildString {
+                        append("\"${state.result.name}\": ${state.result.days} días y ")
+                        append("${state.result.exercises} ejercicios.")
+                        if (state.result.skippedExercises.isNotEmpty()) {
+                            append("\n\nNo he reconocido estos ejercicios en tu catálogo y los he ")
+                            append("dejado fuera: ")
+                            append(state.result.skippedExercises.distinct().joinToString(", "))
+                            append(". Puedes crearlos a mano y añadirlos.")
+                        }
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.dismissImportMessage()
+                    onRoutineClick(state.result.routineId)
+                }) { Text("Abrir") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissImportMessage) { Text("Cerrar") }
+            },
+        )
+
+        is RoutineImportUiState.Failed -> AlertDialog(
+            onDismissRequest = viewModel::dismissImportMessage,
+            title = { Text("No se pudo importar") },
+            text = { Text(state.message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissImportMessage) { Text("Vale") }
+            },
+        )
+
+        else -> Unit
+    }
 }
 
 @Composable
@@ -176,17 +227,7 @@ private fun RoutineCard(
             }
             Spacer(Modifier.height(8.dp))
             if (routine.isActive) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text("Activa") },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                )
+                TagChip(label = "Activa", icon = Icons.Filled.CheckCircle)
             } else {
                 TextButton(onClick = onSetActive) { Text("Marcar como activa") }
             }

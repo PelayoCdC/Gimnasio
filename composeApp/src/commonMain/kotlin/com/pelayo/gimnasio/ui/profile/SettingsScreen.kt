@@ -41,6 +41,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.pelayo.gimnasio.platform.isDynamicColorSupported
+import com.pelayo.gimnasio.ui.theme.ThemeMode
+import com.pelayo.gimnasio.ui.theme.ThemeSettings
+import com.pelayo.gimnasio.util.formatLongEs
+import androidx.compose.material3.FilterChip
+import kotlinx.datetime.LocalDate
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,6 +79,48 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item {
+                // Directo de ThemeSettings, no del ViewModel: lo lee App() por
+                // encima de la navegación y es el mismo estado observable.
+                val themeSettings = koinInject<ThemeSettings>()
+                val mode by themeSettings.mode.collectAsState()
+                val dynamicColor by themeSettings.dynamicColor.collectAsState()
+
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Apariencia", style = MaterialTheme.typography.titleMedium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ThemeMode.entries.forEach { option ->
+                                FilterChip(
+                                    selected = mode == option,
+                                    onClick = { themeSettings.setMode(option) },
+                                    label = { Text(option.labelEs) },
+                                )
+                            }
+                        }
+                        if (isDynamicColorSupported()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "Colores del sistema",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        "Material You: la paleta sale de tu fondo de pantalla.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = dynamicColor,
+                                    onCheckedChange = themeSettings::setDynamicColor,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -165,13 +214,22 @@ fun SettingsScreen(
                             }
 
                             if (reminders.workoutRemindersOn) {
+                                // El valor vive local mientras se arrastra y solo se
+                                // aplica al soltar: escribir en Settings y reprogramar
+                                // todas las alarmas en cada píxel era una barbaridad.
+                                var draggedHour by remember(reminders.hour) {
+                                    mutableStateOf(reminders.hour.toFloat())
+                                }
                                 Text(
-                                    "Hora del aviso: ${reminders.hour}:00",
+                                    "Hora del aviso: ${draggedHour.toInt()}:00",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Slider(
-                                    value = reminders.hour.toFloat(),
-                                    onValueChange = { viewModel.setReminderHour(it.toInt()) },
+                                    value = draggedHour,
+                                    onValueChange = { draggedHour = it },
+                                    onValueChangeFinished = {
+                                        viewModel.setReminderHour(draggedHour.toInt())
+                                    },
                                     valueRange = 6f..22f,
                                     steps = 15,
                                 )
@@ -201,7 +259,9 @@ fun SettingsScreen(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Catálogo de ejercicios", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            viewModel.lastCatalogSync?.let { "Última actualización: ${it.take(10)}" }
+                            viewModel.lastCatalogSync
+                                ?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+                                ?.let { "Última actualización: ${it.formatLongEs()}" }
                                 ?: "Todavía no lo has descargado.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -287,6 +347,15 @@ fun SettingsScreen(
                         Text(
                             "Se omitieron ${s.skippedExercises} series o ejercicios porque no están en tu " +
                                 "catálogo actual. Actualiza el catálogo desde wger y vuelve a restaurar.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (s.skippedFoodItems > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Se omitieron ${s.skippedFoodItems} comidas o ingredientes porque su alimento " +
+                                "no está en esta instalación (la copia es de una versión que no los incluía).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

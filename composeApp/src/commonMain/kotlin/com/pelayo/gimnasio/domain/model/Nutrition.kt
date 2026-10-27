@@ -12,10 +12,15 @@ data class FoodItem(
     val carbsPer100: Double,
     val fatPer100: Double,
     val fiberPer100: Double?,
-    val servingSizeG: Double?,
+    /** Ración en la unidad del alimento, gramos o mililitros. */
+    val servingSize: Double?,
     val imageUrl: String?,
     val isCustom: Boolean,
+    val unit: FoodUnit = FoodUnit.G,
 )
+
+/** Tamaño del catálogo local de alimentos, para la cabecera del catálogo. */
+data class FoodCounts(val total: Int, val custom: Int)
 
 /** Macros totales de una cantidad concreta de comida. */
 data class Macros(
@@ -58,6 +63,14 @@ data class FoodLogItem(
     val quantityLabel: String,
     val macros: Macros,
     val isRecipe: Boolean,
+    /** Cantidad tal cual está guardada, para poder editarla sin releer la fila. */
+    val grams: Double? = null,
+    val servings: Double? = null,
+    /** Unidad del alimento; null en las recetas, que van por raciones. */
+    val unit: FoodUnit? = null,
+    /** Referencias originales, para poder deshacer un borrado reinsertando. */
+    val foodId: Long? = null,
+    val recipeId: Long? = null,
 )
 
 data class DayNutrition(
@@ -70,15 +83,19 @@ data class DayNutrition(
 }
 
 /**
- * Balance calórico del día: lo ingerido frente al gasto (basal + actividad
- * diaria + entrenamientos registrados).
+ * Balance calórico del día: lo ingerido frente al gasto.
+ *
+ * El gasto es el TDEE a secas: el factor de actividad ya incluye el entrenamiento
+ * por definición ("Moderado (3-5 días/semana)"), así que sumarle encima las kcal
+ * del entreno del día las contaba dos veces y sobreestimaba el gasto en
+ * 200-400 kcal. [exerciseKcal] se conserva solo para enseñarla como detalle.
  */
 data class CalorieBalance(
     val intakeKcal: Double,
     val tdeeKcal: Double?,
     val exerciseKcal: Double,
 ) {
-    val expenditureKcal: Double? get() = tdeeKcal?.let { it + exerciseKcal }
+    val expenditureKcal: Double? get() = tdeeKcal
     val balanceKcal: Double? get() = expenditureKcal?.let { intakeKcal - it }
 }
 
@@ -103,12 +120,29 @@ data class RecipeItem(
         }
 }
 
+/**
+ * Dónde está usada una receta. El diario manda: si está ahí, no se puede borrar,
+ * porque es el registro de lo que se comió.
+ */
+data class RecipeUsage(val diaryEntries: Int, val dietPlanMeals: Int) {
+    val canDelete: Boolean get() = diaryEntries == 0
+}
+
+/**
+ * Dónde está usado un alimento. Igual que con las recetas, el diario veta el
+ * borrado; una receta también, porque se quedaría sin poder calcularse.
+ */
+data class FoodUsage(val diaryEntries: Int, val recipeIngredients: Int) {
+    val canDelete: Boolean get() = diaryEntries == 0 && recipeIngredients == 0
+}
+
 data class RecipeIngredientItem(
     val id: Long,
     val foodId: Long,
     val foodName: String,
     val grams: Double,
     val macros: Macros,
+    val unit: FoodUnit = FoodUnit.G,
 )
 
 data class DietPlanItem(
@@ -121,15 +155,28 @@ data class DietPlanItem(
     val isActive: Boolean,
     val meals: List<DietPlanMealItem>,
 ) {
-    /** Lo que suman realmente los alimentos del plan, que puede no cuadrar con el objetivo. */
-    val plannedMacros: Macros
-        get() = meals.fold(Macros()) { acc, meal -> acc + meal.macros }
+    fun mealsForDay(dayOfWeek: Int): List<DietPlanMealItem> =
+        meals.filter { it.dayOfWeek == dayOfWeek }
 
-    fun mealsFor(type: MealType): List<DietPlanMealItem> = meals.filter { it.mealType == type }
+    fun mealsFor(dayOfWeek: Int, type: MealType): List<DietPlanMealItem> =
+        meals.filter { it.dayOfWeek == dayOfWeek && it.mealType == type }
+
+    /**
+     * Lo que suman realmente los alimentos de un día, que puede no cuadrar con el
+     * objetivo. Los objetivos del plan son diarios, así que el total de la semana
+     * no sirve para compararlos.
+     */
+    fun plannedMacros(dayOfWeek: Int): Macros =
+        mealsForDay(dayOfWeek).fold(Macros()) { acc, meal -> acc + meal.macros }
+
+    /** Días de la semana (ISO) con algo planificado. */
+    val plannedDays: Set<Int> get() = meals.map { it.dayOfWeek }.toSet()
 }
 
 data class DietPlanMealItem(
     val id: Long,
+    /** Día de la semana en ISO: lunes = 1. */
+    val dayOfWeek: Int,
     val mealType: MealType,
     val name: String,
     val quantityLabel: String,
@@ -138,6 +185,8 @@ data class DietPlanMealItem(
     val recipeId: Long?,
     val grams: Double?,
     val servings: Double?,
+    /** Unidad del alimento; null en las recetas, que van por raciones. */
+    val unit: FoodUnit? = null,
 )
 
 /**

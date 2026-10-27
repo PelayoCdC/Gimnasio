@@ -13,7 +13,14 @@ CREATE TABLE Food (
     servingSizeG REAL,
     imageUrl TEXT,
     isCustom INTEGER NOT NULL DEFAULT 0,
-    cachedAt TEXT
+    cachedAt TEXT,
+    -- 'G' o 'ML'. Los valores nutricionales van por 100 de esta unidad; los
+    -- líquidos de Open Food Facts vienen por 100 ml y decir "g" era mentir.
+    unit TEXT NOT NULL DEFAULT 'G',
+    -- Nombre y marca en minúsculas y sin tildes, como Exercise.searchName: es
+    -- contra lo que busca searchFoods. Lo calcula Kotlin al guardar; las bases
+    -- anteriores lo traen a NULL y DatabaseSeeder lo rellena al arrancar.
+    searchName TEXT
 );
 
 CREATE TABLE Recipe (
@@ -60,42 +67,86 @@ CREATE TABLE DietPlanMeal (
     recipeId INTEGER REFERENCES Recipe(id),
     grams REAL,
     servings REAL,
+    -- Día de la semana en ISO (lunes = 1), como RoutineDay.weekday. Va el último
+    -- porque es donde lo deja ALTER TABLE ADD COLUMN, y el esquema migrado tiene
+    -- que salir idéntico al de una instalación nueva.
+    dayOfWeek INTEGER NOT NULL DEFAULT 1,
     CHECK ((foodId IS NULL) != (recipeId IS NULL))
 );
 
 CREATE INDEX idx_food_name ON Food(name);
 CREATE INDEX idx_foodlog_date ON FoodLogEntry(date);
 CREATE INDEX idx_recipe_ingredient_recipe ON RecipeIngredient(recipeId);
+CREATE INDEX idx_dietplanmeal_plan ON DietPlanMeal(dietPlanId);
+CREATE INDEX idx_dietplanmeal_recipe ON DietPlanMeal(recipeId);
+CREATE INDEX idx_dietplanmeal_food ON DietPlanMeal(foodId);
+CREATE INDEX idx_foodlog_recipe ON FoodLogEntry(recipeId);
+CREATE INDEX idx_foodlog_food ON FoodLogEntry(foodId);
+CREATE INDEX idx_recipe_ingredient_food ON RecipeIngredient(foodId);
+CREATE INDEX idx_recipe_name ON Recipe(name);
 
 upsertFoodByBarcode {
     UPDATE Food
     SET name = :name, brand = :brand, kcalPer100 = :kcalPer100, proteinPer100 = :proteinPer100,
         carbsPer100 = :carbsPer100, fatPer100 = :fatPer100, fiberPer100 = :fiberPer100,
-        servingSizeG = :servingSizeG, imageUrl = :imageUrl, cachedAt = :cachedAt
+        servingSizeG = :servingSizeG, imageUrl = :imageUrl, cachedAt = :cachedAt, unit = :unit,
+        searchName = :searchName
     WHERE offBarcode = :offBarcode;
 
-    INSERT OR IGNORE INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt)
-    VALUES (:offBarcode, :name, :brand, :kcalPer100, :proteinPer100, :carbsPer100, :fatPer100, :fiberPer100, :servingSizeG, :imageUrl, 0, :cachedAt);
+    INSERT OR IGNORE INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt, unit, searchName)
+    VALUES (:offBarcode, :name, :brand, :kcalPer100, :proteinPer100, :carbsPer100, :fatPer100, :fiberPer100, :servingSizeG, :imageUrl, 0, :cachedAt, :unit, :searchName);
 }
 
 insertCustomFood:
-INSERT INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt)
-VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, NULL);
+INSERT INTO Food(offBarcode, name, brand, kcalPer100, proteinPer100, carbsPer100, fatPer100, fiberPer100, servingSizeG, imageUrl, isCustom, cachedAt, unit, searchName)
+VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, NULL, ?, ?);
+
+-- Corregir la unidad a mano: lo que se cacheó antes de que existiera la columna
+-- quedó en gramos, y Open Food Facts tampoco acierta siempre.
+updateFoodUnit:
+UPDATE Food SET unit = ? WHERE id = ?;
 
 updateFood:
-UPDATE Food SET name = ?, brand = ?, kcalPer100 = ?, proteinPer100 = ?, carbsPer100 = ?, fatPer100 = ?, fiberPer100 = ?, servingSizeG = ? WHERE id = ?;
+UPDATE Food SET name = ?, brand = ?, kcalPer100 = ?, proteinPer100 = ?, carbsPer100 = ?, fatPer100 = ?, fiberPer100 = ?, servingSizeG = ?, searchName = ? WHERE id = ?;
+
+-- Para rellenar searchName en las bases que vienen de antes de la columna.
+selectFoodsWithoutSearchName:
+SELECT id, name, brand FROM Food WHERE searchName IS NULL;
+
+updateFoodSearchName:
+UPDATE Food SET searchName = ? WHERE id = ?;
 
 deleteFood:
 DELETE FROM Food WHERE id = ?;
 
+-- Dónde se está usando un alimento. Igual que con las recetas: el diario y las
+-- recetas lo referencian sin ON DELETE, así que borrar sin mirar esto revienta
+-- con un fallo de clave foránea (y la app con él).
+countFoodLogEntriesForFood:
+SELECT count(*) FROM FoodLogEntry WHERE foodId = ?;
+
+countRecipeIngredientsForFood:
+SELECT count(*) FROM RecipeIngredient WHERE foodId = ?;
+
+deleteDietPlanMealsForFood:
+DELETE FROM DietPlanMeal WHERE foodId = ?;
+
+-- La consulta llega ya normalizada (minúsculas y sin tildes); searchName guarda
+-- nombre y marca igual de normalizados. Los alimentos de antes de la columna
+-- caen al nombre a secas hasta que el seeder los rellene.
 searchFoods:
 SELECT * FROM Food
-WHERE :query = '' OR name LIKE '%' || :query || '%' OR brand LIKE '%' || :query || '%'
+WHERE :query = '' OR COALESCE(searchName, name) LIKE '%' || :query || '%'
 ORDER BY isCustom DESC, name
 LIMIT :limit;
 
 selectFoodById:
 SELECT * FROM Food WHERE id = ?;
+
+-- Cuántos alimentos hay guardados y cuántos de ellos son propios. Se cuenta con
+-- CASE en vez de con SUM para que las dos columnas salgan no nulas.
+countFoods:
+SELECT count(*) AS total, count(CASE WHEN isCustom = 1 THEN 1 END) AS custom FROM Food;
 
 selectFoodByBarcode:
 SELECT * FROM Food WHERE offBarcode = ?;
@@ -111,6 +162,18 @@ UPDATE Recipe SET name = ?, servings = ?, notes = ? WHERE id = ?;
 
 deleteRecipe:
 DELETE FROM Recipe WHERE id = ?;
+
+-- Dónde se está usando una receta. El diario y los planes la referencian sin
+-- ON DELETE, así que borrarla sin mirar esto revienta con un fallo de clave
+-- foránea (y la app con él).
+countRecipeLogEntries:
+SELECT count(*) FROM FoodLogEntry WHERE recipeId = ?;
+
+countRecipeDietPlanMeals:
+SELECT count(*) FROM DietPlanMeal WHERE recipeId = ?;
+
+deleteDietPlanMealsForRecipe:
+DELETE FROM DietPlanMeal WHERE recipeId = ?;
 
 selectAllRecipes:
 SELECT * FROM Recipe ORDER BY name;
@@ -128,10 +191,30 @@ deleteRecipeIngredient:
 DELETE FROM RecipeIngredient WHERE id = ?;
 
 selectIngredientsForRecipe:
-SELECT ri.*, f.name, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100
+SELECT ri.*, f.name, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100, f.unit
 FROM RecipeIngredient ri
 JOIN Food f ON f.id = ri.foodId
 WHERE ri.recipeId = ?;
+
+-- Los ingredientes de todas las recetas de una vez, para montar la lista de
+-- recetas sin una consulta por receta.
+selectAllRecipeIngredients:
+SELECT ri.*, f.name, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100, f.unit
+FROM RecipeIngredient ri
+JOIN Food f ON f.id = ri.foodId;
+
+-- Macros totales por receta en una sola consulta. El diario y los planes
+-- escalaban recetas con dos consultas por fila apuntada; con esto basta un mapa.
+selectRecipeMacroTotals:
+SELECT r.id AS recipeId, r.servings,
+       COALESCE(SUM(ri.grams * f.kcalPer100 / 100), 0) AS kcal,
+       COALESCE(SUM(ri.grams * f.proteinPer100 / 100), 0) AS protein,
+       COALESCE(SUM(ri.grams * f.carbsPer100 / 100), 0) AS carbs,
+       COALESCE(SUM(ri.grams * f.fatPer100 / 100), 0) AS fat
+FROM Recipe r
+LEFT JOIN RecipeIngredient ri ON ri.recipeId = r.id
+LEFT JOIN Food f ON f.id = ri.foodId
+GROUP BY r.id;
 
 insertFoodLogEntry:
 INSERT INTO FoodLogEntry(date, mealType, foodId, recipeId, grams, servings, loggedAt)
@@ -146,6 +229,7 @@ DELETE FROM FoodLogEntry WHERE id = ?;
 selectFoodLogForDate:
 SELECT fl.*,
        f.name AS foodName, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100,
+       f.unit AS foodUnit,
        r.name AS recipeName, r.id AS rId
 FROM FoodLogEntry fl
 LEFT JOIN Food f ON f.id = fl.foodId
@@ -173,21 +257,42 @@ setActiveDietPlan {
 selectAllDietPlans:
 SELECT * FROM DietPlan ORDER BY isActive DESC, name;
 
+selectDietPlanById:
+SELECT * FROM DietPlan WHERE id = ?;
+
 selectActiveDietPlan:
 SELECT * FROM DietPlan WHERE isActive = 1 LIMIT 1;
 
 insertDietPlanMeal:
-INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, recipeId, grams, servings) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, recipeId, grams, servings, dayOfWeek)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+updateDietPlanMeal:
+UPDATE DietPlanMeal SET grams = ?, servings = ?, mealType = ?, dayOfWeek = ? WHERE id = ?;
 
 deleteDietPlanMeal:
 DELETE FROM DietPlanMeal WHERE id = ?;
 
+deleteDietPlanMealsForDay:
+DELETE FROM DietPlanMeal WHERE dietPlanId = ? AND dayOfWeek = ?;
+
+/**
+ * Copia el menú de un día al de otro dentro del mismo plan. El día destino se
+ * vacía antes (`deleteDietPlanMealsForDay`), así que esto solo añade.
+ */
+copyDietPlanDay:
+INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, recipeId, grams, servings, dayOfWeek)
+SELECT dietPlanId, mealType, foodId, recipeId, grams, servings, :toDay
+FROM DietPlanMeal
+WHERE dietPlanId = :planId AND dayOfWeek = :fromDay;
+
 selectMealsForDietPlan:
 SELECT dpm.*,
        f.name AS foodName, f.kcalPer100, f.proteinPer100, f.carbsPer100, f.fatPer100,
+       f.unit AS foodUnit,
        r.name AS recipeName
 FROM DietPlanMeal dpm
 LEFT JOIN Food f ON f.id = dpm.foodId
 LEFT JOIN Recipe r ON r.id = dpm.recipeId
 WHERE dpm.dietPlanId = ?
-ORDER BY dpm.mealType;
+ORDER BY dpm.dayOfWeek, dpm.mealType;

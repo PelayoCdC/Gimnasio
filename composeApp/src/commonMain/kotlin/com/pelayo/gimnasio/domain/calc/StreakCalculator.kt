@@ -8,7 +8,7 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 
 data class StreakInfo(
-    /** Semanas seguidas cumpliendo el objetivo, contando hasta la semana pasada. */
+    /** Semanas seguidas cumpliendo el objetivo. La semana en curso suma si ya está cumplida. */
     val weekStreak: Int,
     /** Entrenamientos de la semana en curso. */
     val sessionsThisWeek: Int,
@@ -40,6 +40,9 @@ object StreakCalculator {
         sessionDates: List<LocalDate>,
         today: LocalDate,
         weeklyTarget: Int,
+        // Las fechas vienen deduplicadas de la consulta (DISTINCT), así que dos
+        // sesiones el mismo día son una sola fecha: el total real llega aparte.
+        totalSessions: Int = sessionDates.size,
     ): StreakInfo {
         val distinctDates = sessionDates.distinct().sorted()
         val startOfThisWeek = today.startOfWeek()
@@ -68,8 +71,10 @@ object StreakCalculator {
             weekStreak = streak,
             sessionsThisWeek = sessionsThisWeek,
             weeklyTarget = weeklyTarget,
-            daysSinceLastWorkout = distinctDates.lastOrNull()?.let { it.daysUntil(today) },
-            totalSessions = sessionDates.size,
+            // coerceAtLeast: una sesión con fecha futura (corregida a mano) no
+            // debe salir como "-2 días desde el último entrenamiento".
+            daysSinceLastWorkout = distinctDates.lastOrNull()?.let { it.daysUntil(today).coerceAtLeast(0) },
+            totalSessions = totalSessions,
         )
     }
 

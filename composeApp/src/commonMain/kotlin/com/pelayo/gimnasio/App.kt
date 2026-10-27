@@ -38,12 +38,16 @@ import com.pelayo.gimnasio.ui.navigation.WorkoutRoute
 import com.pelayo.gimnasio.ui.navigation.WorkoutSummaryRoute
 import com.pelayo.gimnasio.ui.navigation.bottomTabs
 import com.pelayo.gimnasio.domain.model.MealType
+import com.pelayo.gimnasio.ui.navigation.FoodCatalogRoute
+import com.pelayo.gimnasio.ui.navigation.FoodDiaryRoute
 import com.pelayo.gimnasio.ui.navigation.FoodSearchRoute
 import com.pelayo.gimnasio.ui.navigation.DietPlanRoute
 import com.pelayo.gimnasio.ui.navigation.RecipeEditRoute
 import com.pelayo.gimnasio.ui.navigation.RecipeListRoute
 import com.pelayo.gimnasio.ui.nutrition.DietPlanScreen
+import com.pelayo.gimnasio.ui.nutrition.FoodCatalogScreen
 import com.pelayo.gimnasio.ui.nutrition.FoodDiaryScreen
+import com.pelayo.gimnasio.ui.nutrition.NutritionScreen
 import com.pelayo.gimnasio.ui.nutrition.FoodSearchScreen
 import com.pelayo.gimnasio.ui.nutrition.RecipeEditScreen
 import com.pelayo.gimnasio.ui.nutrition.RecipeListScreen
@@ -52,6 +56,12 @@ import com.pelayo.gimnasio.ui.profile.ProfileScreen
 import com.pelayo.gimnasio.ui.profile.SettingsScreen
 import kotlinx.datetime.LocalDate
 import com.pelayo.gimnasio.ui.theme.GimnasioTheme
+import com.pelayo.gimnasio.ui.theme.ThemeSettings
+import androidx.compose.runtime.collectAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import com.pelayo.gimnasio.ui.workout.WorkoutScreen
 import com.pelayo.gimnasio.ui.workout.active.ActiveWorkoutScreen
 import com.pelayo.gimnasio.ui.workout.active.WorkoutSummaryScreen
@@ -80,7 +90,11 @@ private fun NavHostController.navigateToTab(route: Any) {
 @OptIn(ExperimentalCoilApi::class)
 @Composable
 fun App() {
-    GimnasioTheme {
+    val themeSettings = koinInject<ThemeSettings>()
+    val themeMode by themeSettings.mode.collectAsState()
+    val dynamicColor by themeSettings.dynamicColor.collectAsState()
+
+    GimnasioTheme(mode = themeMode, dynamicColor = dynamicColor) {
         val httpClient = koinInject<HttpClient>()
         setSingletonImageLoaderFactory { context ->
             ImageLoader.Builder(context)
@@ -91,19 +105,25 @@ fun App() {
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentDestination = backStackEntry?.destination
 
+        // Durante el entreno la barra de pestañas estorba y es peligrosa: un toque
+        // te saca de la sesión sin avisar, y su hueco lo ocupa el temporizador.
+        val hideBottomBar = currentDestination?.hasRoute(ActiveWorkoutRoute::class) == true
+
         Scaffold(
             bottomBar = {
-                NavigationBar {
-                    bottomTabs.forEach { tab ->
-                        val selected = currentDestination?.hierarchy?.any {
-                            it.hasRoute(tab.route::class)
-                        } == true
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = { navController.navigateToTab(tab.route) },
-                            icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(stringResource(tab.label)) },
-                        )
+                if (!hideBottomBar) {
+                    NavigationBar {
+                        bottomTabs.forEach { tab ->
+                            val selected = currentDestination?.hierarchy?.any {
+                                it.hasRoute(tab.route::class)
+                            } == true
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = { navController.navigateToTab(tab.route) },
+                                icon = { Icon(tab.icon, contentDescription = null) },
+                                label = { Text(stringResource(tab.label)) },
+                            )
+                        }
                     }
                 }
             },
@@ -112,6 +132,16 @@ fun App() {
                 navController = navController,
                 startDestination = HomeRoute,
                 modifier = Modifier.padding(innerPadding),
+                // Deslizamiento sutil en vez del corte seco por defecto; el pop
+                // invierte la dirección para que "volver" se sienta como volver.
+                enterTransition = {
+                    slideInHorizontally(initialOffsetX = { it / 4 }) + fadeIn()
+                },
+                exitTransition = { fadeOut() },
+                popEnterTransition = { fadeIn() },
+                popExitTransition = {
+                    slideOutHorizontally(targetOffsetX = { it / 4 }) + fadeOut()
+                },
             ) {
                 composable<HomeRoute> {
                     HomeScreen(
@@ -133,19 +163,35 @@ fun App() {
                 composable<CalendarRoute> {
                     CalendarScreen(
                         onSessionClick = { id -> navController.navigate(WorkoutSummaryRoute(id)) },
+                        onResumeSession = { id -> navController.navigate(ActiveWorkoutRoute(id)) },
+                        onOpenDiary = { date ->
+                            navController.navigate(FoodDiaryRoute(date.toString()))
+                        },
                     )
                 }
                 composable<NutritionRoute> {
-                    FoodDiaryScreen(
-                        onAddFood = { date, meal ->
-                            navController.navigate(FoodSearchRoute(date.toString(), meal.name))
-                        },
+                    NutritionScreen(
+                        onOpenDiary = { navController.navigate(FoodDiaryRoute()) },
+                        onOpenCatalog = { navController.navigate(FoodCatalogRoute) },
                         onOpenRecipes = { navController.navigate(RecipeListRoute) },
                         onOpenDietPlans = { navController.navigate(DietPlanRoute) },
                     )
                 }
+                composable<FoodDiaryRoute> { entry ->
+                    val route = entry.toRoute<FoodDiaryRoute>()
+                    FoodDiaryScreen(
+                        onAddFood = { date, meal ->
+                            navController.navigate(FoodSearchRoute(date.toString(), meal.name))
+                        },
+                        onBack = { navController.popBackStack() },
+                        initialDate = route.dateIso?.let { LocalDate.parse(it) },
+                    )
+                }
                 composable<DietPlanRoute> {
                     DietPlanScreen(onBack = { navController.popBackStack() })
+                }
+                composable<FoodCatalogRoute> {
+                    FoodCatalogScreen(onBack = { navController.popBackStack() })
                 }
                 composable<RecipeListRoute> {
                     RecipeListScreen(
@@ -204,6 +250,7 @@ fun App() {
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        onOpenCatalog = { navController.navigate(ExerciseCatalogRoute) },
                     )
                 }
                 composable<RoutineDetailRoute> { entry ->

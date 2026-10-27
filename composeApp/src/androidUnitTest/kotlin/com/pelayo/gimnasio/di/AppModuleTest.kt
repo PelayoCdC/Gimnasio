@@ -42,6 +42,9 @@ class AppModuleTest {
                 definition<ActiveWorkoutViewModel>(Long::class),
                 definition<WorkoutSummaryViewModel>(Long::class),
                 definition<com.pelayo.gimnasio.ui.nutrition.RecipeEditViewModel>(Long::class),
+                definition<com.pelayo.gimnasio.ui.nutrition.FoodDiaryViewModel>(
+                    kotlinx.datetime.LocalDate::class,
+                ),
             ),
         )
     }

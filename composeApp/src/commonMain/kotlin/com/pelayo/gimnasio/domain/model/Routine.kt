@@ -10,6 +10,15 @@ data class RoutineSummary(
     val exerciseCount: Int,
 )
 
+/** Resultado de importar una rutina de texto: lo que entró y lo que no se reconoció. */
+data class RoutineImportResult(
+    val routineId: Long,
+    val name: String,
+    val days: Int,
+    val exercises: Int,
+    val skippedExercises: List<String>,
+)
+
 data class RoutineDayInfo(
     val id: Long,
     val routineId: Long,

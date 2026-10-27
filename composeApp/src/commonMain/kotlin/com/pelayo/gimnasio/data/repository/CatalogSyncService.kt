@@ -6,7 +6,9 @@ import com.pelayo.gimnasio.data.remote.WgerApi
 import com.pelayo.gimnasio.data.remote.WgerMapper
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.russhwolf.settings.Settings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 
 sealed interface SyncProgress {
@@ -31,65 +33,75 @@ class CatalogSyncService(
     val lastSyncedAt: String? get() = settings.getStringOrNull(KEY_SYNCED_AT)
 
     fun sync(): Flow<SyncProgress> = flow {
-        try {
-            emit(SyncProgress.Running(0, 0))
+        emit(SyncProgress.Running(0, 0))
 
-            val languages = api.getLanguages()
-            val esId = languages.firstOrNull { it.shortName.equals("es", true) }?.id
-            val enId = languages.firstOrNull { it.shortName.equals("en", true) }?.id
+        val languages = api.getLanguages()
+        val esId = languages.firstOrNull { it.shortName.equals("es", true) }?.id
+        val enId = languages.firstOrNull { it.shortName.equals("en", true) }?.id
 
-            // Equipamiento: lo desconocido entra con el nombre de la API.
-            val equipment = api.getEquipment()
+        // Equipamiento: lo desconocido entra con el nombre de la API.
+        val equipment = api.getEquipment()
+        db.transaction {
+            equipment.forEach { eq ->
+                val id = eq.id.toLong()
+                val name = WgerMappings.equipmentNamesEs[id] ?: eq.name
+                db.catalogQueries.insertEquipment(id, name)
+            }
+        }
+        // Para filtrar lo que referencie material fuera de la página descargada:
+        // insertarlo violaría la foránea y tiraría la transacción de la página.
+        val knownEquipmentIds = equipment.map { it.id.toLong() }.toSet()
+
+        var imported = 0
+        var offset = 0
+        var total: Int
+        do {
+            val page = api.getExercisePage(offset)
+            total = page.count
             db.transaction {
-                equipment.forEach { eq ->
-                    val id = eq.id.toLong()
-                    val name = WgerMappings.equipmentNamesEs[id] ?: eq.name
-                    db.catalogQueries.insertEquipment(id, name)
+                page.results.forEach { dto ->
+                    val mapped = WgerMapper.map(dto, esId, enId) ?: return@forEach
+                    val q = db.catalogQueries
+                    q.upsertExerciseByWgerId(
+                        nameEs = mapped.nameEs,
+                        nameEn = mapped.nameEn,
+                        descriptionEs = mapped.descriptionEs,
+                        categoryId = mapped.categoryId,
+                        videoUrl = mapped.videoUrl,
+                        metValue = mapped.metValue,
+                        exerciseType = mapped.exerciseType,
+                        wgerId = mapped.wgerId,
+                        searchName = DatabaseSeeder.searchNameFor(
+                            mapped.nameEs,
+                            mapped.nameEn,
+                            mapped.aliases,
+                        ),
+                    )
+                    val exerciseId = q.selectExerciseIdByWgerId(mapped.wgerId).executeAsOne()
+                    q.deleteExerciseMuscles(exerciseId)
+                    mapped.primaryMuscleIds.forEach { q.insertExerciseMuscle(exerciseId, it, "PRIMARY") }
+                    mapped.secondaryMuscleIds.forEach { q.insertExerciseMuscle(exerciseId, it, "SECONDARY") }
+                    q.deleteExerciseEquipment(exerciseId)
+                    mapped.equipmentIds.filter { it in knownEquipmentIds }
+                        .forEach { q.insertExerciseEquipment(exerciseId, it) }
+                    q.deleteExerciseImages(exerciseId)
+                    mapped.imageUrls.forEach { (url, isMain) ->
+                        q.insertExerciseImage(exerciseId, url, if (isMain) 1 else 0)
+                    }
+                    imported++
                 }
             }
+            offset += WgerApi.PAGE_SIZE
+            emit(SyncProgress.Running(minOf(offset, total), total))
+        } while (page.next != null)
 
-            var imported = 0
-            var offset = 0
-            var total: Int
-            do {
-                val page = api.getExercisePage(offset)
-                total = page.count
-                db.transaction {
-                    page.results.forEach { dto ->
-                        val mapped = WgerMapper.map(dto, esId, enId) ?: return@forEach
-                        val q = db.catalogQueries
-                        q.upsertExerciseByWgerId(
-                            nameEs = mapped.nameEs,
-                            nameEn = mapped.nameEn,
-                            descriptionEs = mapped.descriptionEs,
-                            categoryId = mapped.categoryId,
-                            videoUrl = mapped.videoUrl,
-                            metValue = mapped.metValue,
-                            exerciseType = mapped.exerciseType,
-                            wgerId = mapped.wgerId,
-                            searchName = DatabaseSeeder.searchNameFor(mapped.nameEs, mapped.nameEn),
-                        )
-                        val exerciseId = q.selectExerciseIdByWgerId(mapped.wgerId).executeAsOne()
-                        q.deleteExerciseMuscles(exerciseId)
-                        mapped.primaryMuscleIds.forEach { q.insertExerciseMuscle(exerciseId, it, "PRIMARY") }
-                        mapped.secondaryMuscleIds.forEach { q.insertExerciseMuscle(exerciseId, it, "SECONDARY") }
-                        q.deleteExerciseEquipment(exerciseId)
-                        mapped.equipmentIds.forEach { q.insertExerciseEquipment(exerciseId, it) }
-                        q.deleteExerciseImages(exerciseId)
-                        mapped.imageUrls.forEach { (url, isMain) ->
-                            q.insertExerciseImage(exerciseId, url, if (isMain) 1 else 0)
-                        }
-                        imported++
-                    }
-                }
-                offset += WgerApi.PAGE_SIZE
-                emit(SyncProgress.Running(minOf(offset, total), total))
-            } while (page.next != null)
-
-            settings.putString(KEY_SYNCED_AT, com.pelayo.gimnasio.util.nowIsoString())
-            emit(SyncProgress.Finished(imported))
-        } catch (e: Exception) {
-            emit(SyncProgress.Failed(e.message ?: "Error desconocido al descargar el catálogo"))
-        }
+        settings.putString(KEY_SYNCED_AT, com.pelayo.gimnasio.util.nowIsoString())
+        emit(SyncProgress.Finished(imported))
+    }.catch { e ->
+        // Como operador y no como try/catch alrededor de los emit: aquello
+        // capturaba también lo que lanzase el colector (violando la transparencia
+        // del Flow) y convertía salir de la pantalla en un "Failed" fantasma.
+        if (e is CancellationException) throw e
+        emit(SyncProgress.Failed(e.message ?: "Error desconocido al descargar el catálogo"))
     }
 }

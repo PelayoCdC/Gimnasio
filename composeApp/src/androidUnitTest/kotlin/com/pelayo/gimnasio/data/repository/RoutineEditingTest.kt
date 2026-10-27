@@ -23,6 +23,110 @@ class RoutineEditingTest {
     }
 
     @Test
+    fun cambiar_las_series_de_la_rutina_las_pone_en_todos_los_ejercicios() = runTest {
+        val f = Fixture()
+        val routineId = f.repo.createRoutine("Torso", null, RoutineGoal.HIPERTROFIA)
+        val dayOne = f.repo.addDay(routineId, "Día 1", weekday = null)
+        val dayTwo = f.repo.addDay(routineId, "Día 2", weekday = null)
+        f.repo.addExerciseToDay(dayOne, f.bench, RoutineGoal.HIPERTROFIA)
+        f.repo.addExerciseToDay(dayTwo, f.squat, RoutineGoal.HIPERTROFIA)
+
+        f.repo.setSetsForRoutine(routineId, 5)
+
+        val exercises = f.repo.routineDetail(routineId)!!.days.flatMap { it.exercises }
+        assertEquals(listOf(5, 5), exercises.map { it.targetSets })
+        // Las repeticiones y el descanso se quedan como estaban.
+        assertTrue(exercises.all { it.restSeconds == 90 })
+    }
+
+    @Test
+    fun una_rutina_exportada_a_texto_se_vuelve_a_importar() = runTest {
+        val f = Fixture()
+        val routineId = f.repo.createRoutine("Torso", "Mi plan", RoutineGoal.HIPERTROFIA)
+        val dayId = f.repo.addDay(routineId, "Empuje", weekday = 1)
+        f.repo.addExerciseToDay(dayId, f.bench, RoutineGoal.HIPERTROFIA)
+        f.repo.addExerciseToDay(dayId, f.squat, RoutineGoal.HIPERTROFIA)
+
+        val markdown = assertNotNull(f.repo.exportRoutineMarkdown(routineId))
+        val result = assertNotNull(f.repo.importRoutineMarkdown(markdown))
+
+        assertTrue(result.skippedExercises.isEmpty(), "no ha reconocido: ${result.skippedExercises}")
+        assertEquals(2, result.exercises)
+        // No pisa la original: se queda con las dos.
+        assertEquals(2, f.repo.routines().first().size)
+
+        val imported = assertNotNull(f.repo.routineDetail(result.routineId))
+        assertEquals("Torso (2)", imported.name, "el nombre repetido se desambigua")
+        assertEquals(RoutineGoal.HIPERTROFIA, imported.goal)
+        val day = imported.days.single()
+        assertEquals("Empuje", day.name)
+        assertEquals(1, day.weekday)
+        assertEquals(listOf("Press de banca", "Sentadilla"), day.exercises.map { it.exerciseName })
+    }
+
+    @Test
+    fun importar_una_rutina_escrita_a_mano_salta_lo_que_no_conoce() = runTest {
+        val f = Fixture()
+        val texto = """
+        # Rutina del gimnasio
+
+        Objetivo: fuerza
+
+        ## Lunes (lunes)
+        - Press de banca 5x5 descanso 3 min
+        - Ejercicio que no existe 3x10
+        """.trimIndent()
+
+        val result = assertNotNull(f.repo.importRoutineMarkdown(texto))
+
+        assertEquals(1, result.exercises)
+        assertEquals(listOf("Ejercicio que no existe"), result.skippedExercises)
+
+        val exercise = f.repo.routineDetail(result.routineId)!!.days.single().exercises.single()
+        assertEquals("Press de banca", exercise.exerciseName)
+        assertEquals(5, exercise.targetSets, "respeta las series del texto")
+        assertEquals(180, exercise.restSeconds, "y el descanso en minutos")
+    }
+
+    @Test
+    fun un_fichero_que_no_es_una_rutina_no_crea_nada() = runTest {
+        val f = Fixture()
+        assertNull(f.repo.importRoutineMarkdown("hola, esto no es una rutina"))
+        assertTrue(f.repo.routines().first().isEmpty())
+    }
+
+    @Test
+    fun cambiar_un_ejercicio_por_otro_conserva_series_descanso_y_posicion() = runTest {
+        val f = Fixture()
+        val routineId = f.repo.createRoutine("Torso", null, RoutineGoal.HIPERTROFIA)
+        val dayId = f.repo.addDay(routineId, "Día 1", weekday = null)
+        f.repo.addExerciseToDay(dayId, f.squat, RoutineGoal.HIPERTROFIA)
+        f.repo.addExerciseToDay(dayId, f.bench, RoutineGoal.HIPERTROFIA)
+        val press = f.repo.routineDetail(routineId)!!.days.single().exercises.last()
+        f.repo.updateRoutineExercise(
+            id = press.id,
+            targetSets = 5,
+            targetRepsMin = 6,
+            targetRepsMax = 8,
+            targetTimeSeconds = null,
+            targetWeight = 60.0,
+            restSeconds = 150,
+            notes = null,
+            position = press.position,
+        )
+
+        f.repo.replaceRoutineExercise(press.id, f.squat, RoutineGoal.HIPERTROFIA)
+
+        val exercises = f.repo.routineDetail(routineId)!!.days.single().exercises
+        assertEquals(2, exercises.size, "cambiar no debe añadir una fila")
+        val swapped = exercises.last()
+        assertEquals("Sentadilla", swapped.exerciseName)
+        assertEquals(press.position, swapped.position, "se queda donde estaba")
+        assertEquals(5, swapped.targetSets, "conserva las series")
+        assertEquals(150, swapped.restSeconds, "conserva el descanso")
+    }
+
+    @Test
     fun renombrar_un_dia_no_toca_sus_ejercicios() = runTest {
         val f = Fixture()
         val routineId = f.repo.createRoutine("Torso", null, RoutineGoal.HIPERTROFIA)

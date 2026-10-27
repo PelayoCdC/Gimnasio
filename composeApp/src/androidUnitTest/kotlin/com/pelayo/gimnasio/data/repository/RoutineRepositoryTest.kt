@@ -178,6 +178,30 @@ class RoutineRepositoryTest {
     }
 
     @Test
+    fun reordenar_en_lote_aplica_el_orden_del_arrastre() = runTest {
+        val db = setup()
+        val repo = RoutineRepository(db, Dispatchers.Unconfined)
+        val a = db.insertTestExercise(1, "A", listOf(4L))
+        val b = db.insertTestExercise(2, "B", listOf(12L))
+        val c = db.insertTestExercise(3, "C", listOf(10L))
+
+        val routineId = repo.createRoutine("Orden", null, RoutineGoal.HIPERTROFIA)
+        val dayId = repo.addDay(routineId, "Día", null)
+        listOf(a, b, c).forEach { repo.addExerciseToDay(dayId, it, RoutineGoal.HIPERTROFIA) }
+
+        val items = repo.routineDetail(routineId)!!.days.single().exercises
+        fun rowId(name: String) = items.first { it.exerciseName == name }.id
+
+        // El orden que dejó el arrastre, más un id fantasma que debe ignorarse.
+        repo.reorderRoutineExercises(dayId, listOf(rowId("C"), rowId("A"), rowId("B"), 9999L))
+
+        assertEquals(
+            listOf("C", "A", "B"),
+            repo.routineDetail(routineId)!!.days.single().exercises.map { it.exerciseName },
+        )
+    }
+
+    @Test
     fun mover_fuera_de_los_extremos_no_hace_nada() = runTest {
         val db = setup()
         val repo = RoutineRepository(db, Dispatchers.Unconfined)

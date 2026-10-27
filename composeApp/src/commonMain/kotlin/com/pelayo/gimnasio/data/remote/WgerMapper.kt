@@ -43,13 +43,19 @@ object WgerMapper {
             categoryId = categoryId,
             videoUrl = dto.videos.firstOrNull { it.video.isNotBlank() }?.video,
             metValue = WgerMappings.metForCategory(categoryId),
-            exerciseType = WgerMappings.exerciseTypeForCategory(categoryId),
+            exerciseType = WgerMappings.exerciseTypeFor(chosen.name, categoryId),
             primaryMuscleIds = dto.muscles.map { it.id.toLong() }.filter { it in WgerMappings.muscles },
             secondaryMuscleIds = dto.musclesSecondary.map { it.id.toLong() }
                 .filter { it in WgerMappings.muscles }
                 .minus(dto.muscles.map { it.id.toLong() }.toSet()),
             equipmentIds = dto.equipment.map { it.id.toLong() },
             imageUrls = dto.images.filter { it.image.isNotBlank() }.map { it.image to it.isMain },
+            // Los de las dos traducciones: "press banca" y "bench press" son cosas
+            // distintas que el usuario puede teclear.
+            aliases = listOfNotNull(es, en)
+                .flatMap { translation -> translation.aliases.map { it.alias.trim() } }
+                .filter { it.isNotBlank() }
+                .distinct(),
         )
     }
 }

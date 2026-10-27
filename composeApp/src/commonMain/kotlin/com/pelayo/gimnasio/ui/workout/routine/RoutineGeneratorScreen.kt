@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -49,12 +51,14 @@ import org.koin.compose.viewmodel.koinViewModel
 fun RoutineGeneratorScreen(
     onSaved: (Long) -> Unit,
     onBack: () -> Unit,
+    onOpenCatalog: () -> Unit = {},
     viewModel: RoutineGeneratorViewModel = koinViewModel(),
 ) {
     val daysPerWeek by viewModel.daysPerWeek.collectAsState()
     val goal by viewModel.goal.collectAsState()
     val level by viewModel.level.collectAsState()
     val minutesPerSession by viewModel.minutesPerSession.collectAsState()
+    val setsPerExercise by viewModel.setsPerExercise.collectAsState()
     val equipment by viewModel.equipment.collectAsState()
     val selectedEquipment by viewModel.selectedEquipment.collectAsState()
     val preview by viewModel.preview.collectAsState()
@@ -80,13 +84,18 @@ fun RoutineGeneratorScreen(
             if (catalogEmpty) {
                 item {
                     Card(Modifier.fillMaxWidth()) {
-                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Warning, contentDescription = null, tint = WarningAmber)
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                "Descarga primero el catálogo de ejercicios desde Entrenamiento → Catálogo.",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Warning, contentDescription = null, tint = WarningAmber)
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "Descarga primero el catálogo de ejercicios: sin él no hay " +
+                                        "nada con lo que montar la rutina.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(onClick = onOpenCatalog) { Text("Ir al catálogo") }
                         }
                     }
                 }
@@ -153,6 +162,37 @@ fun RoutineGeneratorScreen(
                 }
             }
 
+            // Las series van después del objetivo: es el ajuste fino de lo que ya
+            // se ha decidido, y así las preguntas de arriba no se mueven de sitio.
+            item { Text("¿Cuántas series por ejercicio?", style = MaterialTheme.typography.titleMedium) }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = setsPerExercise == null,
+                        onClick = { viewModel.setSetsPerExercise(null) },
+                        label = { Text("Automático") },
+                    )
+                    RoutineGenerator.SET_OPTIONS.forEach { sets ->
+                        FilterChip(
+                            selected = setsPerExercise == sets,
+                            onClick = { viewModel.setSetsPerExercise(sets) },
+                            label = { Text("$sets") },
+                        )
+                    }
+                }
+            }
+            item {
+                Text(
+                    if (setsPerExercise == null) {
+                        "Automático: las que pidan el objetivo y tu nivel."
+                    } else {
+                        "Con más series caben menos ejercicios en la misma sesión."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             if (equipment.isNotEmpty()) {
                 item {
                     Column {
@@ -178,11 +218,20 @@ fun RoutineGeneratorScreen(
             }
 
             item {
+                val generating by viewModel.generating.collectAsState()
                 OutlinedButton(
                     onClick = viewModel::generate,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !catalogEmpty,
-                ) { Text(if (preview == null) "Generar propuesta" else "Regenerar") }
+                    enabled = !catalogEmpty && !generating,
+                ) {
+                    if (generating) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generando…")
+                    } else {
+                        Text(if (preview == null) "Generar propuesta" else "Regenerar")
+                    }
+                }
             }
 
             preview?.let { result ->
@@ -227,6 +276,28 @@ fun RoutineGeneratorScreen(
                                 Text(
                                     "Con el material elegido no hay ejercicios para: " +
                                         result.routine.uncoveredGroups.joinToString(", ") + ".",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // La propuesta ya viene reequilibrada; si aún quedan avisos es que
+                // no cabe más entrenamiento en los días y minutos elegidos, y lo
+                // honesto es decir qué hay que subir en vez de callarlo.
+                if (!result.balance.isBalanced && result.routine.uncoveredGroups.isEmpty()) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Filled.Warning, contentDescription = null, tint = WarningAmber)
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "He repartido lo mejor que he podido, pero con " +
+                                        "${result.routine.days.size} días de " +
+                                        "${result.routine.minutesPerSession} min no da para cubrir " +
+                                        "todos los grupos. Sube a tres días o alarga la sesión y " +
+                                        "los avisos de abajo desaparecen.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }

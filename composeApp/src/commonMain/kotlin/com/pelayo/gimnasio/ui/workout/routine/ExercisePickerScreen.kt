@@ -27,15 +27,22 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,18 +66,32 @@ fun ExercisePickerScreen(
     val query by viewModel.query.collectAsState()
     val groupFilter by viewModel.muscleGroupFilter.collectAsState()
     val preview by viewModel.preview.collectAsState()
+    val loadingPreview by viewModel.loadingPreview.collectAsState()
+    val addedCount by viewModel.addedCount.collectAsState()
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Añadir ejercicio") },
+                title = {
+                    // La pantalla no se cierra al añadir: el título lleva la cuenta
+                    // para que se vea que los toques están surtiendo efecto.
+                    Text(if (addedCount == 0) "Añadir ejercicio" else "Añadidos: $addedCount")
+                },
                 navigationIcon = {
                     IconButton(onClick = onDone) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                     }
                 },
+                actions = {
+                    if (addedCount > 0) {
+                        TextButton(onClick = onDone) { Text("Hecho") }
+                    }
+                },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             OutlinedTextField(
@@ -81,6 +102,11 @@ fun ExercisePickerScreen(
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
             )
+            // Abrir una ficha tarda lo suyo (fotos, músculos): sin esto el toque
+            // parecía no hacer nada hasta que aparecía la hoja.
+            if (loadingPreview) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            }
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -90,6 +116,22 @@ fun ExercisePickerScreen(
                         selected = groupFilter == group.id,
                         onClick = { viewModel.setMuscleGroup(group.id) },
                         label = { Text(group.name) },
+                    )
+                }
+            }
+            // El mismo filtro de material que el catálogo: el picker lo había
+            // perdido por el camino.
+            val equipmentFilter by viewModel.equipmentFilter.collectAsState()
+            val equipment by viewModel.equipment.collectAsState()
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(equipment) { eq ->
+                    FilterChip(
+                        selected = equipmentFilter == eq.id,
+                        onClick = { viewModel.setEquipment(eq.id) },
+                        label = { Text(eq.nameEs) },
                     )
                 }
             }
@@ -144,7 +186,11 @@ fun ExercisePickerScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
-                                IconButton(onClick = { viewModel.addExercise(exercise.id, onDone) }) {
+                                IconButton(onClick = {
+                                    viewModel.addExercise(exercise.id) { name ->
+                                        scope.launch { snackbarHost.showSnackbar("$name añadido") }
+                                    }
+                                }) {
                                     Icon(Icons.Filled.Add, contentDescription = "Añadir ${exercise.name}")
                                 }
                             }
@@ -161,7 +207,9 @@ fun ExercisePickerScreen(
             onDismiss = viewModel::hidePreview,
             onAdd = {
                 viewModel.hidePreview()
-                viewModel.addExercise(detail.id, onDone)
+                viewModel.addExercise(detail.id) { name ->
+                    scope.launch { snackbarHost.showSnackbar("$name añadido") }
+                }
             },
         )
     }

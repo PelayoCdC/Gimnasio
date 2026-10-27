@@ -15,9 +15,11 @@ import com.pelayo.gimnasio.domain.model.ExerciseComplexity
 import com.pelayo.gimnasio.domain.model.ExperienceLevel
 import com.pelayo.gimnasio.domain.model.MuscleRole
 import com.pelayo.gimnasio.domain.model.RoutineGoal
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class GeneratedPreview(
     val routine: GeneratedRoutine,
@@ -37,6 +39,9 @@ class RoutineGeneratorViewModel(
     val goal = MutableStateFlow(RoutineGoal.HIPERTROFIA)
     val level = MutableStateFlow(ExperienceLevel.INTERMEDIO)
     val minutesPerSession = MutableStateFlow(RoutineGenerator.DEFAULT_MINUTES_PER_SESSION)
+
+    /** null = las que diga el objetivo y el nivel; un número, lo que elija el usuario. */
+    val setsPerExercise = MutableStateFlow<Int?>(null)
     val selectedEquipment = MutableStateFlow<Set<Long>>(emptySet())
 
     private val _equipment = MutableStateFlow<List<EquipmentItem>>(emptyList())
@@ -52,7 +57,12 @@ class RoutineGeneratorViewModel(
         viewModelScope.launch {
             catalog = exerciseRepository.candidates()
             _catalogEmpty.value = catalog.isEmpty()
-            _equipment.value = exerciseRepository.equipment()
+            // Máquinas y poleas no existen como equipamiento en wger; se ofrecen
+            // como chips sintéticos para que "entreno en casa" pueda excluirlas.
+            _equipment.value = listOf(
+                EquipmentItem(RoutineGenerator.MACHINE_EQUIPMENT_ID, "Máquinas"),
+                EquipmentItem(RoutineGenerator.PULLEY_EQUIPMENT_ID, "Poleas"),
+            ) + exerciseRepository.equipment()
         }
     }
 
@@ -76,6 +86,12 @@ class RoutineGeneratorViewModel(
         if (_preview.value != null) generate()
     }
 
+    /** Se vuelve a pulsar la misma opción y se deja decidir al objetivo otra vez. */
+    fun setSetsPerExercise(sets: Int?) {
+        setsPerExercise.value = sets
+        if (_preview.value != null) generate()
+    }
+
     fun toggleEquipment(id: Long) {
         selectedEquipment.value = selectedEquipment.value.toMutableSet().apply {
             if (!add(id)) remove(id)
@@ -83,29 +99,47 @@ class RoutineGeneratorViewModel(
         if (_preview.value != null) generate()
     }
 
+    private val _generating = MutableStateFlow(false)
+    val generating: StateFlow<Boolean> = _generating
+
     fun generate() {
         viewModelScope.launch {
-            if (catalog.isEmpty()) {
-                catalog = exerciseRepository.candidates()
-                _catalogEmpty.value = catalog.isEmpty()
-                if (catalog.isEmpty()) return@launch
-            }
+            _generating.value = true
+            try {
+                if (catalog.isEmpty()) {
+                    catalog = exerciseRepository.candidates()
+                    _catalogEmpty.value = catalog.isEmpty()
+                    if (catalog.isEmpty()) return@launch
+                }
 
-            val routine = RoutineGenerator.generate(
-                daysPerWeek = daysPerWeek.value,
-                goal = goal.value,
-                catalog = catalog,
-                availableEquipmentIds = selectedEquipment.value.takeIf { it.isNotEmpty() },
-                level = level.value,
-                minutesPerSession = minutesPerSession.value,
-            )
-            _preview.value = GeneratedPreview(
-                routine = routine,
-                balance = MuscleBalanceAnalyzer.analyze(routine.toVolumeEntries(catalog)),
-                exerciseNames = catalog.associate { it.id to it.name },
-                exerciseComplexity = catalog.filter { it.id in routine.exerciseIds }
-                    .associate { it.id to it.complexity },
-            )
+                // Fuera del hilo principal: con el catálogo entero, generar y
+                // reequilibrar es trabajo de verdad y congelaba la pantalla.
+                _preview.value = withContext(Dispatchers.Default) {
+                    val routine = RoutineGenerator.generate(
+                        daysPerWeek = daysPerWeek.value,
+                        goal = goal.value,
+                        catalog = catalog,
+                        availableEquipmentIds = selectedEquipment.value.takeIf { it.isNotEmpty() },
+                        level = level.value,
+                        minutesPerSession = minutesPerSession.value,
+                        setsPerExercise = setsPerExercise.value,
+                    )
+                    GeneratedPreview(
+                        routine = routine,
+                        // Con el nivel: el mismo umbral que usó el generador para
+                        // reequilibrar, para que el aviso y la propuesta cuadren.
+                        balance = MuscleBalanceAnalyzer.analyze(
+                            routine.toVolumeEntries(catalog),
+                            routine.level,
+                        ),
+                        exerciseNames = catalog.associate { it.id to it.name },
+                        exerciseComplexity = catalog.filter { it.id in routine.exerciseIds }
+                            .associate { it.id to it.complexity },
+                    )
+                }
+            } finally {
+                _generating.value = false
+            }
         }
     }
 

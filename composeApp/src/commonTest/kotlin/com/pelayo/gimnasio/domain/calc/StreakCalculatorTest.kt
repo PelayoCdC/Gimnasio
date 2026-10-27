@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.domain.calc
 
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.plus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -114,5 +115,28 @@ class StreakCalculatorTest {
     fun sin_nada_hecho_ningun_logro_esta_desbloqueado() {
         val info = StreakInfo(0, 0, 3, null, 0)
         assertTrue(StreakCalculator.achievements(info).none { it.unlocked })
+    }
+
+    @Test
+    fun el_total_de_sesiones_llega_aparte_de_las_fechas() {
+        // Las fechas vienen deduplicadas (DISTINCT): dos sesiones el mismo día
+        // hacían que los logros fueran por detrás del contador de la portada.
+        val info = StreakCalculator.calculate(
+            sessionDates = listOf(saturday),
+            today = saturday,
+            weeklyTarget = 3,
+            totalSessions = 2,
+        )
+        assertEquals(2, info.totalSessions)
+    }
+
+    @Test
+    fun una_fecha_futura_no_da_dias_negativos() {
+        val info = StreakCalculator.calculate(
+            sessionDates = listOf(saturday.plus(kotlinx.datetime.DatePeriod(days = 3))),
+            today = saturday,
+            weeklyTarget = 3,
+        )
+        assertEquals(0, info.daysSinceLastWorkout)
     }
 }

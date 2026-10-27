@@ -2,6 +2,8 @@ package com.pelayo.gimnasio.data.repository
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOne
+import com.pelayo.gimnasio.data.db.DatabaseSeeder
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.calc.CandidateExercise
 import com.pelayo.gimnasio.domain.model.EquipmentItem
@@ -25,8 +27,10 @@ class ExerciseRepository(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
+    // mapToOne(dispatcher) y no map { executeAsOne() }: la consulta debe correr
+    // en IO, no en el hilo del colector.
     fun exerciseCount(): Flow<Long> =
-        db.catalogQueries.countExercises().asFlow().map { it.executeAsOne() }
+        db.catalogQueries.countExercises().asFlow().mapToOne(dispatcher)
 
     /**
      * Busca por palabras sueltas: todas tienen que aparecer en el nombre, en
@@ -83,9 +87,105 @@ class ExerciseRepository(
                     secondaryGroupIds = rows.filter { it.role == "SECONDARY" }
                         .map { it.muscleGroupId }.toSet(),
                     equipmentIds = equipmentByExercise[exerciseId].orEmpty().toSet(),
+                    categoryId = rows.first().categoryId,
                 )
             }
     }
+
+    // --- Ejercicios propios --------------------------------------------------
+
+    /**
+     * Crea un ejercicio propio. Los grupos musculares se traducen al primer
+     * músculo de wger de cada grupo: la tabla de músculos es de wger y el
+     * análisis de balance agrega por grupo, así que con uno basta.
+     */
+    suspend fun createCustomExercise(
+        name: String,
+        description: String?,
+        exerciseType: ExerciseType,
+        primaryGroupIds: Set<Long>,
+        secondaryGroupIds: Set<Long> = emptySet(),
+        metValue: Double = 3.5,
+    ): Long = withContext(dispatcher) {
+        val muscleByGroup = muscleByGroup()
+        db.transactionWithResult {
+            db.catalogQueries.insertCustomExercise(
+                nameEs = name,
+                descriptionEs = description?.takeIf { it.isNotBlank() },
+                categoryId = null,
+                videoUrl = null,
+                metValue = metValue,
+                exerciseType = exerciseType.name,
+                searchName = DatabaseSeeder.searchNameFor(name, null),
+            )
+            val id = db.catalogQueries.lastInsertRowId().executeAsOne()
+            primaryGroupIds.mapNotNull { muscleByGroup[it] }.forEach {
+                db.catalogQueries.insertExerciseMuscle(id, it, "PRIMARY")
+            }
+            secondaryGroupIds.mapNotNull { muscleByGroup[it] }.forEach {
+                db.catalogQueries.insertExerciseMuscle(id, it, "SECONDARY")
+            }
+            id
+        }
+    }
+
+    suspend fun updateCustomExercise(
+        id: Long,
+        name: String,
+        description: String?,
+        exerciseType: ExerciseType,
+        primaryGroupIds: Set<Long>,
+        secondaryGroupIds: Set<Long> = emptySet(),
+    ) = withContext(dispatcher) {
+        val muscleByGroup = muscleByGroup()
+        db.transaction {
+            db.catalogQueries.updateCustomExercise(
+                name,
+                description?.takeIf { it.isNotBlank() },
+                3.5,
+                exerciseType.name,
+                DatabaseSeeder.searchNameFor(name, null),
+                id,
+            )
+            db.catalogQueries.deleteExerciseMuscles(id)
+            primaryGroupIds.mapNotNull { muscleByGroup[it] }.forEach {
+                db.catalogQueries.insertExerciseMuscle(id, it, "PRIMARY")
+            }
+            secondaryGroupIds.mapNotNull { muscleByGroup[it] }.forEach {
+                db.catalogQueries.insertExerciseMuscle(id, it, "SECONDARY")
+            }
+        }
+    }
+
+    /** En cuántas rutinas y series del historial aparece el ejercicio. */
+    suspend fun customExerciseUsage(id: Long): Pair<Int, Int> = withContext(dispatcher) {
+        db.catalogQueries.countRoutineUsesForExercise(id).executeAsOne().toInt() to
+            db.catalogQueries.countSetLogsForExercise(id).executeAsOne().toInt()
+    }
+
+    /**
+     * Borra un ejercicio propio. Devuelve false sin tocar nada si está en alguna
+     * rutina o en el historial: ambos lo referencian sin ON DELETE y el historial
+     * no se reescribe.
+     */
+    suspend fun deleteCustomExercise(id: Long): Boolean = withContext(dispatcher) {
+        db.transactionWithResult {
+            val used = db.catalogQueries.countRoutineUsesForExercise(id).executeAsOne() > 0 ||
+                db.catalogQueries.countSetLogsForExercise(id).executeAsOne() > 0
+            if (used) {
+                false
+            } else {
+                db.catalogQueries.deleteCustomExercise(id)
+                true
+            }
+        }
+    }
+
+    /** Primer músculo de wger de cada grupo, para materializar el alta por grupos. */
+    private fun muscleByGroup(): Map<Long, Long> =
+        db.catalogQueries.selectAllMuscles().executeAsList()
+            .groupBy { it.muscleGroupId }
+            .mapValues { (_, muscles) -> muscles.first().id }
 
     suspend fun exerciseDetail(id: Long): ExerciseDetail? = withContext(dispatcher) {
         val e = db.catalogQueries.selectExerciseById(id).executeAsOneOrNull() ?: return@withContext null

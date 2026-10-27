@@ -8,7 +8,12 @@ CREATE TABLE UserProfile (
     heightCm REAL,
     activityFactor REAL NOT NULL DEFAULT 1.375,
     goal TEXT,
-    targetKcalOverride REAL
+    targetKcalOverride REAL,
+    -- Peso al que se quiere llegar; con la tendencia semanal da la proyección
+    -- de Inicio ("a este ritmo llegas en octubre"). Al final, que es donde lo
+    -- deja ALTER TABLE ADD COLUMN (el CHECK de arriba es de columna y se queda
+    -- donde está).
+    targetWeightKg REAL
 );
 
 CREATE TABLE BodyMeasurement (
@@ -25,8 +30,8 @@ CREATE TABLE BodyMeasurement (
 CREATE INDEX idx_measurement_date ON BodyMeasurement(date);
 
 upsertProfile:
-INSERT OR REPLACE INTO UserProfile(id, name, sex, birthDate, heightCm, activityFactor, goal, targetKcalOverride)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO UserProfile(id, name, sex, birthDate, heightCm, activityFactor, goal, targetKcalOverride, targetWeightKg)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectProfile:
 SELECT * FROM UserProfile WHERE id = 1;
@@ -43,6 +48,3 @@ SELECT * FROM BodyMeasurement ORDER BY date DESC, id DESC;
 
 selectLatestMeasurement:
 SELECT * FROM BodyMeasurement ORDER BY date DESC, id DESC LIMIT 1;
-
-selectMeasurementDates:
-SELECT DISTINCT date FROM BodyMeasurement ORDER BY date;

@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.data.db
 
 import com.pelayo.gimnasio.db.GimnasioDb
+import com.pelayo.gimnasio.domain.calc.ExerciseFormatClassifier
 import com.pelayo.gimnasio.domain.model.MuscleGroups
 import com.pelayo.gimnasio.util.normalizeForSearch
 
@@ -24,6 +25,49 @@ object DatabaseSeeder {
             }
         }
         fillMissingSearchNames(db)
+        fillMissingFoodSearchNames(db)
+        fixTimeBasedExerciseTypes(db)
+    }
+
+    /**
+     * Igual que [fillMissingSearchNames] pero para los alimentos, que ganaron su
+     * `searchName` (nombre y marca, normalizados) en la versión 4 del esquema.
+     */
+    fun fillMissingFoodSearchNames(db: GimnasioDb) {
+        val q = db.nutritionQueries
+        val pending = q.selectFoodsWithoutSearchName().executeAsList()
+        if (pending.isEmpty()) return
+        db.transaction {
+            pending.forEach { row ->
+                q.updateFoodSearchName(foodSearchNameFor(row.name, row.brand), row.id)
+            }
+        }
+    }
+
+    /** Contra lo que busca el catálogo de alimentos: nombre y marca normalizados. */
+    fun foodSearchNameFor(name: String, brand: String?): String =
+        normalizeForSearch(listOfNotNull(name, brand).joinToString(" "))
+
+    /**
+     * Corrige el tipo de los ejercicios que se miden en tiempo y llegaron marcados
+     * como de repeticiones. wger no distingue los isométricos, así que la plancha
+     * pedía kilos y reps; el catálogo ya descargado no se arregla solo, y volver a
+     * sincronizarlo entero por esto sería pasarse.
+     *
+     * Solo toca los del catálogo de wger: si el usuario se creó un ejercicio, el
+     * tipo lo eligió él.
+     */
+    fun fixTimeBasedExerciseTypes(db: GimnasioDb) {
+        val q = db.catalogQueries
+        val wrong = q.selectExerciseNames().executeAsList().filter { row ->
+            row.exerciseType == "REPS" &&
+                row.isCustom == 0L &&
+                ExerciseFormatClassifier.isTimeBased(row.nameEs, row.categoryId)
+        }
+        if (wrong.isEmpty()) return
+        db.transaction {
+            wrong.forEach { q.updateExerciseType("TIME", it.id) }
+        }
     }
 
     /**
@@ -42,7 +86,12 @@ object DatabaseSeeder {
         }
     }
 
-    /** El nombre en español y el inglés juntos, para poder buscar por cualquiera de los dos. */
-    fun searchNameFor(nameEs: String, nameEn: String?): String =
-        normalizeForSearch(listOfNotNull(nameEs, nameEn).joinToString(" "))
+    /**
+     * Contra lo que busca el catálogo: el nombre en español, el inglés y los
+     * nombres alternativos que trae wger, todo junto y normalizado. Los alias son
+     * justo lo que la gente teclea ("press banca" en vez de "press de banca con
+     * barra"), así que sin ellos la búsqueda se queda corta.
+     */
+    fun searchNameFor(nameEs: String, nameEn: String?, aliases: List<String> = emptyList()): String =
+        normalizeForSearch((listOfNotNull(nameEs, nameEn) + aliases).joinToString(" "))
 }

@@ -1,6 +1,8 @@
 package com.pelayo.gimnasio.ui.nutrition
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -16,8 +19,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.EventNote
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.Card
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,12 +29,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -45,8 +56,10 @@ import com.pelayo.gimnasio.domain.model.labelEs
 import com.pelayo.gimnasio.util.monthNamesEs
 import com.pelayo.gimnasio.util.monthNumber
 import com.pelayo.gimnasio.util.today
+import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.parameter.parametersOf
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -54,13 +67,16 @@ import kotlin.math.roundToInt
 @Composable
 fun FoodDiaryScreen(
     onAddFood: (LocalDate, MealType) -> Unit,
-    onOpenRecipes: () -> Unit,
-    onOpenDietPlans: () -> Unit,
-    viewModel: FoodDiaryViewModel = koinViewModel(),
+    onBack: () -> Unit,
+    initialDate: LocalDate? = null,
+    viewModel: FoodDiaryViewModel = koinViewModel { parametersOf(initialDate) },
 ) {
     val date by viewModel.date.collectAsState()
     val day by viewModel.day.collectAsState()
     val balance by viewModel.balance.collectAsState()
+    var editing by remember { mutableStateOf<FoodLogItem?>(null) }
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LifecycleResumeEffect(Unit) {
         viewModel.reload()
@@ -70,14 +86,13 @@ fun FoodDiaryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Nutrición") },
+                title = { Text("Diario") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                    }
+                },
                 actions = {
-                    IconButton(onClick = onOpenDietPlans) {
-                        Icon(Icons.Filled.EventNote, contentDescription = "Planes de dieta")
-                    }
-                    IconButton(onClick = onOpenRecipes) {
-                        Icon(Icons.Filled.MenuBook, contentDescription = "Mis recetas")
-                    }
                     IconButton(onClick = { viewModel.shiftDay(-1) }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Día anterior")
                     }
@@ -90,7 +105,22 @@ fun FoodDiaryScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
+        // Deshacer para los borrados y confirmación de "repetir ayer": el gesto
+        // más frecuente del diario no debe requerir diálogos.
+        fun deleteWithUndo(item: FoodLogItem) {
+            viewModel.deleteEntry(item.id)
+            scope.launch {
+                val result = snackbarHost.showSnackbar(
+                    message = "${item.name} quitado",
+                    actionLabel = "Deshacer",
+                    duration = SnackbarDuration.Short,
+                )
+                if (result == SnackbarResult.ActionPerformed) viewModel.restoreEntry(item)
+            }
+        }
+
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
@@ -112,11 +142,40 @@ fun FoodDiaryScreen(
                         items = day.entriesByMeal[meal].orEmpty(),
                         total = day.mealTotal(meal),
                         onAdd = { onAddFood(date, meal) },
-                        onDelete = viewModel::deleteEntry,
+                        onEdit = { editing = it },
+                        onDelete = ::deleteWithUndo,
+                        onRepeatYesterday = {
+                            viewModel.repeatYesterday(meal) { copied ->
+                                scope.launch {
+                                    snackbarHost.showSnackbar(
+                                        if (copied == 0) {
+                                            "Ayer no apuntaste nada en ${meal.labelEs.lowercase()}"
+                                        } else {
+                                            "$copied de ayer copiadas a ${meal.labelEs.lowercase()}"
+                                        },
+                                    )
+                                }
+                            }
+                        },
                     )
                 }
             }
         }
+    }
+
+    editing?.let { item ->
+        EditQuantityDialog(
+            title = item.name,
+            isRecipe = item.isRecipe,
+            unit = item.unit,
+            initialAmount = (if (item.isRecipe) item.servings else item.grams) ?: 0.0,
+            initialMeal = item.mealType,
+            onDismiss = { editing = null },
+            onConfirm = { meal, amount ->
+                viewModel.updateEntry(item, meal, amount)
+                editing = null
+            },
+        )
     }
 }
 
@@ -199,7 +258,9 @@ private fun MealCard(
     items: List<FoodLogItem>,
     total: Macros,
     onAdd: () -> Unit,
-    onDelete: (Long) -> Unit,
+    onEdit: (FoodLogItem) -> Unit,
+    onDelete: (FoodLogItem) -> Unit,
+    onRepeatYesterday: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -211,12 +272,26 @@ private fun MealCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Se desayuna casi siempre lo mismo: copiar lo de ayer es el
+                // gesto que ahorra el 80 % de los toques de apuntar.
+                IconButton(onClick = onRepeatYesterday) {
+                    Icon(
+                        Icons.Filled.History,
+                        contentDescription = "Repetir ${meal.labelEs.lowercase()} de ayer",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             Spacer(Modifier.height(4.dp))
 
             items.forEach { item ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable { onEdit(item) }
+                            .padding(vertical = 8.dp),
+                    ) {
                         Text(item.name, style = MaterialTheme.typography.bodyMedium)
                         Text(
                             "${item.quantityLabel} · ${item.macros.kcal.roundToInt()} kcal",
@@ -224,7 +299,10 @@ private fun MealCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { onDelete(item.id) }) {
+                    IconButton(onClick = { onEdit(item) }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Editar ${item.name}")
+                    }
+                    IconButton(onClick = { onDelete(item) }) {
                         Icon(Icons.Filled.Delete, contentDescription = "Quitar")
                     }
                 }

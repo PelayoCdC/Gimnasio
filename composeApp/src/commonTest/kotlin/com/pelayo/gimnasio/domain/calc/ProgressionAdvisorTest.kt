@@ -173,4 +173,83 @@ class ProgressionAdvisorTest {
         )
         assertNotNull(suggestion)
     }
+
+    @Test
+    fun tres_sesiones_estancadas_con_el_mismo_peso_proponen_deload() {
+        val suggestion = ProgressionAdvisor.suggest(
+            recentSessions = listOf(
+                session(100.0, 8, 7, 6),
+                session(100.0, 8, 8, 7),
+                session(100.0, 9, 8, 7),
+            ),
+            targetSets = 3,
+            targetRepsMax = 12,
+            isCompound = true,
+        )
+        assertNotNull(suggestion)
+        assertTrue(suggestion.isDeload)
+        assertTrue(suggestion.newWeightKg < 100.0, "el deload baja el peso")
+        // Al múltiplo de 2,5 más cercano: 90 kg.
+        assertEquals(90.0, suggestion.newWeightKg)
+    }
+
+    @Test
+    fun dos_sesiones_flojas_no_bastan_para_el_deload() {
+        val suggestion = ProgressionAdvisor.suggest(
+            recentSessions = listOf(
+                session(100.0, 8, 7, 6),
+                session(100.0, 8, 8, 7),
+            ),
+            targetSets = 3,
+            targetRepsMax = 12,
+            isCompound = true,
+        )
+        assertNull(suggestion)
+    }
+
+    @Test
+    fun si_una_de_las_tres_llego_al_tope_no_hay_deload() {
+        val suggestion = ProgressionAdvisor.suggest(
+            recentSessions = listOf(
+                session(100.0, 8, 7, 6),
+                session(100.0, 12, 12, 12),
+                session(100.0, 9, 8, 7),
+            ),
+            targetSets = 3,
+            targetRepsMax = 12,
+            isCompound = true,
+        )
+        assertNull(suggestion)
+    }
+
+    @Test
+    fun aguantar_el_objetivo_de_tiempo_dos_sesiones_propone_subirlo() {
+        val suggestion = ProgressionAdvisor.suggestTime(
+            recentSessions = listOf(listOf(60, 62, 60), listOf(61, 60, 60)),
+            targetSets = 3,
+            targetTimeSeconds = 60,
+        )
+        assertNotNull(suggestion)
+        assertEquals(75, suggestion.newTimeSeconds)
+        assertEquals(60, suggestion.previousTargetSeconds)
+    }
+
+    @Test
+    fun sin_llegar_al_tiempo_objetivo_no_se_sube() {
+        assertNull(
+            ProgressionAdvisor.suggestTime(
+                recentSessions = listOf(listOf(60, 55, 50), listOf(60, 60, 60)),
+                targetSets = 3,
+                targetTimeSeconds = 60,
+            ),
+        )
+        // Y con una sola sesión tampoco.
+        assertNull(
+            ProgressionAdvisor.suggestTime(
+                recentSessions = listOf(listOf(60, 60, 60)),
+                targetSets = 3,
+                targetTimeSeconds = 60,
+            ),
+        )
+    }
 }

@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.domain.calc
 
+import com.pelayo.gimnasio.domain.model.ExperienceLevel
 import com.pelayo.gimnasio.domain.model.MuscleGroupCategory
 import com.pelayo.gimnasio.domain.model.MuscleGroupInfo
 import com.pelayo.gimnasio.domain.model.MuscleGroups
@@ -49,7 +50,26 @@ object MuscleBalanceAnalyzer {
     val PUSH_PULL_RATIO_RANGE = 0.6..1.5
     val UPPER_LEGS_RATIO_RANGE = 0.5..2.0
 
-    fun analyze(entries: List<MuscleVolumeEntry>): BalanceReport {
+    /**
+     * Umbral mínimo según el nivel: a un principiante con 3 series útiles no hay
+     * que decirle "poco volumen", y un avanzado con 6 sí va corto. Sin nivel se
+     * usan los umbrales genéricos de siempre.
+     */
+    fun lowThresholdFor(level: ExperienceLevel?): Double = when (level) {
+        ExperienceLevel.PRINCIPIANTE -> 4.0
+        ExperienceLevel.AVANZADO -> 8.0
+        else -> LOW_THRESHOLD
+    }
+
+    fun highThresholdFor(level: ExperienceLevel?): Double = when (level) {
+        ExperienceLevel.PRINCIPIANTE -> 15.0
+        ExperienceLevel.AVANZADO -> 25.0
+        else -> HIGH_THRESHOLD
+    }
+
+    fun analyze(entries: List<MuscleVolumeEntry>, level: ExperienceLevel? = null): BalanceReport {
+        val low = lowThresholdFor(level)
+        val high = highThresholdFor(level)
         val volumeByGroup = mutableMapOf<Long, Double>()
         for (entry in entries) {
             val weight = if (entry.role == MuscleRole.PRIMARY) PRIMARY_WEIGHT else SECONDARY_WEIGHT
@@ -59,7 +79,7 @@ object MuscleBalanceAnalyzer {
 
         val scores = MuscleGroups.all.map { group ->
             val sets = volumeByGroup[group.id] ?: 0.0
-            MuscleGroupScore(group, sets, coverageLevel(sets))
+            MuscleGroupScore(group, sets, coverageLevel(sets, low, high))
         }
 
         val warnings = buildList {
@@ -69,7 +89,7 @@ object MuscleBalanceAnalyzer {
             scores.filter { it.level == CoverageLevel.BAJO }.forEach {
                 add(
                     BalanceWarning(
-                        "Poco volumen para ${it.group.name} (${formatSets(it.effectiveSets)} sets/semana; se recomiendan al menos ${LOW_THRESHOLD.toInt()}).",
+                        "Poco volumen para ${it.group.name} (${formatSets(it.effectiveSets)} sets/semana; se recomiendan al menos ${low.toInt()}).",
                         WarningSeverity.AVISO,
                     ),
                 )
@@ -115,10 +135,10 @@ object MuscleBalanceAnalyzer {
         return BalanceReport(scores, warnings)
     }
 
-    private fun coverageLevel(effectiveSets: Double): CoverageLevel = when {
+    private fun coverageLevel(effectiveSets: Double, low: Double, high: Double): CoverageLevel = when {
         effectiveSets <= 0.0 -> CoverageLevel.AUSENTE
-        effectiveSets < LOW_THRESHOLD -> CoverageLevel.BAJO
-        effectiveSets <= HIGH_THRESHOLD -> CoverageLevel.OK
+        effectiveSets < low -> CoverageLevel.BAJO
+        effectiveSets <= high -> CoverageLevel.OK
         else -> CoverageLevel.EXCESIVO
     }
 
@@ -126,5 +146,5 @@ object MuscleBalanceAnalyzer {
         filter { it.group.category == category }.sumOf { it.effectiveSets }
 
     private fun formatSets(sets: Double): String =
-        if (sets == sets.toLong().toDouble()) sets.toLong().toString() else ((sets * 10).toLong() / 10.0).toString()
+        if (sets == sets.toLong().toDouble()) sets.toLong().toString() else (kotlin.math.round(sets * 10) / 10.0).toString()
 }

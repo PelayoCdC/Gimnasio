@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.domain.calc
 
 import com.pelayo.gimnasio.domain.model.ExerciseComplexity
+import com.pelayo.gimnasio.util.containsWordStarting
 import com.pelayo.gimnasio.util.normalizeForSearch
 
 /**
@@ -65,9 +66,15 @@ object ExerciseComplexityClassifier {
     fun classify(name: String, equipmentIds: Set<Long>): ExerciseComplexity {
         val normalized = normalizeForSearch(name)
 
-        if (advancedKeywords.any { it in normalized }) return ExerciseComplexity.AVANZADO
+        // En límite de palabra, no como subcadena: "pino" aparecía dentro de
+        // "supino" y cualquier curl con ese agarre quedaba vetado a principiantes.
+        if (advancedKeywords.any { normalized.containsWordStarting(it) }) {
+            return ExerciseComplexity.AVANZADO
+        }
         if (equipmentIds.any { it in technicalEquipment }) return ExerciseComplexity.INTERMEDIO
-        if (intermediateKeywords.any { it in normalized }) return ExerciseComplexity.INTERMEDIO
+        if (intermediateKeywords.any { normalized.containsWordStarting(it) }) {
+            return ExerciseComplexity.INTERMEDIO
+        }
 
         return ExerciseComplexity.BASICO
     }

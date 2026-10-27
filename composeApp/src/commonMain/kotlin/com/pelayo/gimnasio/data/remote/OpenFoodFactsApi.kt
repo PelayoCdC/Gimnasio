@@ -5,10 +5,22 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 
-/** Error de red o de servicio con un mensaje ya listo para enseñar al usuario. */
-class OpenFoodFactsException(message: String) : Exception(message)
+/**
+ * Error de red o de servicio con un mensaje ya listo para enseñar al usuario.
+ *
+ * [retryAfterSeconds] solo viene cuando Open Food Facts ha cortado por exceso de
+ * peticiones. Es lo que permite bloquear el botón en vez de dejar al usuario
+ * insistiendo, que es justo lo que alarga el corte.
+ */
+class OpenFoodFactsException(
+    message: String,
+    val retryAfterSeconds: Int? = null,
+) : Exception(message) {
+    val isRateLimited: Boolean get() = retryAfterSeconds != null
+}
 
 class OpenFoodFactsApi(private val client: HttpClient) {
 
@@ -32,8 +44,11 @@ class OpenFoodFactsApi(private val client: HttpClient) {
     suspend fun productByBarcode(barcode: String): OffProduct? {
         val response = client.get("$PRODUCT_URL/$barcode") {
             parameter("fields", FIELDS)
-        }.ensureSuccess()
-        val body: OffProductResponse = response.body()
+        }
+        // El 404 aquí es una respuesta válida, no un error: el producto no está
+        // catalogado, y quien escanea debe acabar en "créalo a mano".
+        if (response.status == HttpStatusCode.NotFound) return null
+        val body: OffProductResponse = response.ensureSuccess().body()
         return body.product.takeIf { body.status == 1 }
     }
 
@@ -71,29 +86,48 @@ class OpenFoodFactsApi(private val client: HttpClient) {
     }
 
     /**
-     * Traduce los fallos del servicio a mensajes en español. Open Food Facts se
-     * satura a menudo y devuelve 503; conviene distinguirlo de un error nuestro.
+     * Traduce los fallos del servicio a mensajes en español.
+     *
+     * El 503 no es una caída: es como Open Food Facts corta a los usuarios
+     * anónimos que pasan de unas diez peticiones por minuto, y responde una página
+     * HTML de aviso. Se trata igual que el 429 porque en la práctica es lo mismo,
+     * y lo que toca es dejar de pedir un rato. El 502 y el 504 sí son caídas.
      */
     private fun HttpResponse.ensureSuccess(): HttpResponse {
         if (status.isSuccess()) return this
-        val message = when (status) {
-            HttpStatusCode.ServiceUnavailable, HttpStatusCode.BadGateway,
-            HttpStatusCode.GatewayTimeout,
-            ->
-                "Open Food Facts no responde ahora mismo (error ${status.value}). " +
-                    "Inténtalo en un rato, o crea el alimento a mano."
+        when (status) {
+            HttpStatusCode.TooManyRequests, HttpStatusCode.ServiceUnavailable -> {
+                val wait = retryAfterSeconds() ?: DEFAULT_RETRY_AFTER_SECONDS
+                throw OpenFoodFactsException(
+                    "Open Food Facts ha cortado las búsquedas por hacer muchas seguidas. " +
+                        "Limita a los usuarios anónimos y volver a intentarlo solo lo alarga: " +
+                        "espera ${wait}s. Mientras tanto puedes crear el alimento a mano.",
+                    retryAfterSeconds = wait,
+                )
+            }
 
-            HttpStatusCode.TooManyRequests ->
-                "Demasiadas búsquedas seguidas. Espera un momento antes de volver a intentarlo."
+            else -> throw OpenFoodFactsException(
+                when (status) {
+                    HttpStatusCode.BadGateway, HttpStatusCode.GatewayTimeout ->
+                        "Open Food Facts no responde ahora mismo (error ${status.value}). " +
+                            "Inténtalo en un rato, o crea el alimento a mano."
 
-            HttpStatusCode.NotFound ->
-                "Open Food Facts no encontró ese producto."
+                    HttpStatusCode.NotFound -> "Open Food Facts no encontró ese producto."
 
-            else ->
-                "Open Food Facts devolvió un error ${status.value}."
+                    else -> "Open Food Facts devolvió un error ${status.value}."
+                },
+            )
         }
-        throw OpenFoodFactsException(message)
     }
+
+    /** `Retry-After` en segundos, si el servidor se digna a mandarlo. */
+    private fun HttpResponse.retryAfterSeconds(): Int? =
+        headers[HttpHeaders.RetryAfter]?.trim()?.toIntOrNull()?.takeIf { it in 1..MAX_RETRY_AFTER }
 }
+
+private const val DEFAULT_RETRY_AFTER_SECONDS = 60
+
+/** Tope de sensatez: un Retry-After absurdo no debe dejar el botón muerto una hora. */
+private const val MAX_RETRY_AFTER = 300
 
 private fun HttpStatusCode.isSuccess(): Boolean = value in 200..299

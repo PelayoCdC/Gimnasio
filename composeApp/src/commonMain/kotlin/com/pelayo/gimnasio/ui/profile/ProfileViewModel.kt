@@ -44,6 +44,7 @@ class ProfileViewModel(
         birthDate: LocalDate?,
         heightCm: Double?,
         activityLevel: ActivityLevel,
+        targetWeightKg: Double? = null,
     ) {
         viewModelScope.launch {
             repository.saveProfile(
@@ -55,6 +56,7 @@ class ProfileViewModel(
                     activityLevel = activityLevel,
                     goal = _profile.value?.goal,
                     targetKcalOverride = _profile.value?.targetKcalOverride,
+                    targetWeightKg = targetWeightKg,
                 ),
             )
             reload()
@@ -66,9 +68,10 @@ class ProfileViewModel(
         neckCm: Double?,
         waistCm: Double?,
         hipCm: Double?,
+        date: LocalDate,
     ) {
         viewModelScope.launch {
-            repository.addMeasurement(weightKg, neckCm, waistCm, hipCm)
+            repository.addMeasurement(weightKg, neckCm, waistCm, hipCm, date = date)
             reload()
         }
     }

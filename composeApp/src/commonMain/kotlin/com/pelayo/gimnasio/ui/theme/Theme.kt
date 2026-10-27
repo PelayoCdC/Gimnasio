@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import com.pelayo.gimnasio.platform.platformDynamicColorScheme
 
 private val LightColors = lightColorScheme(
     primary = LimePrimary,
@@ -32,24 +33,41 @@ private val DarkColors = darkColorScheme(
     onPrimary = DarkOnPrimary,
     primaryContainer = DarkPrimaryContainer,
     onPrimaryContainer = DarkOnPrimaryContainer,
-    secondary = TealContainer,
-    onSecondary = TealOnContainer,
-    tertiary = OrangeContainer,
-    onTertiary = OrangeOnContainer,
+    secondary = DarkTealSecondary,
+    onSecondary = DarkOnTealSecondary,
+    secondaryContainer = DarkTealContainer,
+    onSecondaryContainer = DarkOnTealContainer,
+    tertiary = DarkOrangeTertiary,
+    onTertiary = DarkOnOrangeTertiary,
+    tertiaryContainer = DarkOrangeContainer,
+    onTertiaryContainer = DarkOnOrangeContainer,
     background = DarkBackground,
     surface = DarkSurface,
     onSurface = DarkOnSurface,
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkOnSurfaceVariant,
+    error = DarkErrorRed,
+    onError = DarkOnError,
+    errorContainer = DarkErrorContainer,
+    onErrorContainer = DarkOnErrorContainer,
 )
 
 @Composable
 fun GimnasioTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    mode: ThemeMode = ThemeMode.SYSTEM,
+    /** Material You en Android 12+; donde no exista se ignora y manda la paleta lima. */
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val darkTheme = when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    val scheme = (if (dynamicColor) platformDynamicColorScheme(darkTheme) else null)
+        ?: if (darkTheme) DarkColors else LightColors
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = scheme,
         content = content,
     )
 }

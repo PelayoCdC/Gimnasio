@@ -258,4 +258,104 @@ class WorkoutRepositoryTest {
         assertEquals("45 s", set.label)
         assertEquals(0.0, set.volume)
     }
+
+    @Test
+    fun el_calentamiento_no_suma_volumen_ni_kcal() = runTest {
+        val f = Fixture()
+        val dayId = f.routineWithBench()
+
+        val sessionId = f.workouts.startSession(dayId, LocalDate(2026, 7, 25))
+        f.workouts.logSet(sessionId, f.benchId, 1, 40.0, 10, null, isWarmup = true)
+        f.workouts.logSet(sessionId, f.benchId, 2, 80.0, 10, null)
+        f.workouts.completeSession(sessionId, 45, null, null)
+
+        val summary = assertNotNull(f.workouts.summary(sessionId))
+        assertEquals(1, summary.totalSets)
+        // Solo la serie efectiva: 80 × 10.
+        assertEquals(800.0, summary.totalVolume)
+
+        // Las kcal usan el mismo criterio: con solo el calentamiento, cero.
+        val warmupOnly = f.workouts.startSession(dayId, LocalDate(2026, 7, 26))
+        f.workouts.logSet(warmupOnly, f.benchId, 1, 40.0, 10, null, isWarmup = true)
+        assertEquals(0.0, f.workouts.estimateSessionKcal(warmupOnly, bodyWeightKg = 80.0))
+    }
+
+    @Test
+    fun corregir_una_serie_conserva_el_calentamiento_y_el_rpe() = runTest {
+        val f = Fixture()
+        val dayId = f.routineWithBench()
+        val sessionId = f.workouts.startSession(dayId, LocalDate(2026, 7, 25))
+        f.workouts.logSet(sessionId, f.benchId, 1, 40.0, 10, null, isWarmup = true)
+        val setId = f.workouts.activeWorkout(sessionId)!!.exercises.single().loggedSets.single().id
+
+        // Corregir el peso no debe convertirlo en serie efectiva.
+        f.workouts.updateSet(setId, weightKg = 45.0, reps = 10, timeSeconds = null)
+
+        val set = f.workouts.activeWorkout(sessionId)!!.exercises.single().loggedSets.single()
+        assertTrue(set.isWarmup, "el flag de calentamiento debe sobrevivir a la corrección")
+        assertEquals(45.0, set.weightKg)
+    }
+
+    @Test
+    fun la_sesion_anterior_y_su_fecha_salen_de_la_misma_sesion() = runTest {
+        val f = Fixture()
+        val dayId = f.routineWithBench()
+
+        // Sesión vieja por fecha pero insertada la última (id mayor).
+        val recent = f.workouts.startSession(dayId, LocalDate(2026, 7, 20))
+        f.workouts.logSet(recent, f.benchId, 1, 80.0, 10, null)
+        f.workouts.completeSession(recent, 45, null, null)
+
+        val backdated = f.workouts.startSession(dayId, LocalDate(2026, 7, 1))
+        f.workouts.logSet(backdated, f.benchId, 1, 60.0, 10, null)
+        f.workouts.completeSession(backdated, 45, null, null)
+
+        val today = f.workouts.startSession(dayId, LocalDate(2026, 7, 25))
+        val exercise = f.workouts.activeWorkout(today)!!.exercises.single()
+        // Manda la fecha, no el id: lo último de verdad es lo del día 20.
+        assertEquals(LocalDate(2026, 7, 20), exercise.previousDate)
+        assertEquals(80.0, exercise.previousSets.single().weightKg)
+    }
+
+    @Test
+    fun los_records_de_sesion_solo_se_celebran_con_historial_previo() = runTest {
+        val f = Fixture()
+        val dayId = f.routineWithBench()
+
+        // Primera sesión: todo sería récord, así que no se celebra nada.
+        val first = f.workouts.startSession(dayId, LocalDate(2026, 7, 10))
+        f.workouts.logSet(first, f.benchId, 1, 80.0, 10, null)
+        f.workouts.completeSession(first, 45, null, null)
+        assertTrue(f.workouts.newRecordsInSession(first).isEmpty())
+
+        // Segunda con más peso: récord de peso (y de 1RM).
+        val second = f.workouts.startSession(dayId, LocalDate(2026, 7, 17))
+        f.workouts.logSet(second, f.benchId, 1, 85.0, 10, null)
+        f.workouts.completeSession(second, 45, null, null)
+        val records = f.workouts.newRecordsInSession(second)
+        assertEquals(1, records.size)
+        assertEquals("Press de banca", records.single().exerciseName)
+        assertTrue("85" in records.single().description)
+
+        // Tercera más floja: sin récords.
+        val third = f.workouts.startSession(dayId, LocalDate(2026, 7, 24))
+        f.workouts.logSet(third, f.benchId, 1, 70.0, 8, null)
+        f.workouts.completeSession(third, 45, null, null)
+        assertTrue(f.workouts.newRecordsInSession(third).isEmpty())
+    }
+
+    @Test
+    fun los_records_del_ejercicio_incluyen_el_1rm_estimado() = runTest {
+        val f = Fixture()
+        val dayId = f.routineWithBench()
+        val sessionId = f.workouts.startSession(dayId, LocalDate(2026, 7, 25))
+        f.workouts.logSet(sessionId, f.benchId, 1, 100.0, 10, null)
+        f.workouts.completeSession(sessionId, 45, null, null)
+
+        val records = assertNotNull(f.workouts.personalRecords(f.benchId))
+        assertEquals(100.0, records.maxWeightKg)
+        assertEquals(10, records.maxReps)
+        assertEquals(133.0, records.bestEstimated1RM!!, absoluteTolerance = 0.5)
+        assertEquals(1, records.sessions)
+    }
 }

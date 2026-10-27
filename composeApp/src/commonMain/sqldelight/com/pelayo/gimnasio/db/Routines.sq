@@ -34,6 +34,7 @@ CREATE TABLE RoutineExercise (
 
 CREATE INDEX idx_routine_day_routine ON RoutineDay(routineId);
 CREATE INDEX idx_routine_exercise_day ON RoutineExercise(routineDayId);
+CREATE INDEX idx_routine_exercise_exercise ON RoutineExercise(exerciseId);
 
 insertRoutine:
 INSERT INTO Routine(name, description, goal, createdAt, isActive, isGenerated) VALUES (?, ?, ?, ?, ?, ?);
@@ -51,6 +52,17 @@ setActiveRoutine {
 
 selectAllRoutines:
 SELECT * FROM Routine ORDER BY isActive DESC, createdAt DESC;
+
+-- Días y ejercicios de todas las rutinas en una consulta: la lista de rutinas
+-- hacía antes 1 + N consultas (una por rutina, con JOIN pesado) solo para contar.
+countRoutineContents:
+SELECT r.id AS routineId,
+       COUNT(DISTINCT rd.id) AS dayCount,
+       COUNT(re.id) AS exerciseCount
+FROM Routine r
+LEFT JOIN RoutineDay rd ON rd.routineId = r.id
+LEFT JOIN RoutineExercise re ON re.routineDayId = rd.id
+GROUP BY r.id;
 
 selectRoutineById:
 SELECT * FROM Routine WHERE id = ?;
@@ -118,3 +130,7 @@ JOIN RoutineDay rd ON rd.id = re.routineDayId
 JOIN ExerciseMuscle em ON em.exerciseId = re.exerciseId
 JOIN Muscle m ON m.id = em.muscleId
 WHERE rd.routineId = ?;
+
+-- Cambiar de golpe las series de todos los ejercicios de un día.
+updateSetsForDay:
+UPDATE RoutineExercise SET targetSets = ? WHERE routineDayId = ?;

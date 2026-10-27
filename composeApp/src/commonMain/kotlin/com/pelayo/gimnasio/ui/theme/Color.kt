@@ -35,5 +35,21 @@ val DarkOnSurface = Color(0xFFE3E3DB)
 val DarkSurfaceVariant = Color(0xFF44483D)
 val DarkOnSurfaceVariant = Color(0xFFC5C8BA)
 
+// Contenedores del tema oscuro. Sin ellos, las tarjetas que usan
+// secondary/tertiaryContainer caían a los morados por defecto de M3.
+val DarkTealSecondary = Color(0xFF4FD8C7)
+val DarkOnTealSecondary = Color(0xFF00382F)
+val DarkTealContainer = Color(0xFF00504A)
+val DarkOnTealContainer = Color(0xFFB2DFDB)
+
+val DarkOrangeTertiary = Color(0xFFFFB77C)
+val DarkOnOrangeTertiary = Color(0xFF4A2300)
+val DarkOrangeContainer = Color(0xFF6B3A00)
+val DarkOnOrangeContainer = Color(0xFFFFDCC2)
+
 val ErrorRed = Color(0xFFBA1A1A)
+val DarkErrorRed = Color(0xFFFFB4AB)
+val DarkOnError = Color(0xFF690005)
+val DarkErrorContainer = Color(0xFF93000A)
+val DarkOnErrorContainer = Color(0xFFFFDAD6)
 val WarningAmber = Color(0xFFF9A825)

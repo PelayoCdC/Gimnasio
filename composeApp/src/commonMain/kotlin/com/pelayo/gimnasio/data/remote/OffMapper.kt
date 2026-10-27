@@ -1,5 +1,7 @@
 package com.pelayo.gimnasio.data.remote
 
+import com.pelayo.gimnasio.domain.model.FoodUnit
+
 /** Normaliza los productos de Open Food Facts a nuestro modelo de alimento. */
 object OffMapper {
 
@@ -24,8 +26,9 @@ object OffMapper {
             carbsPer100 = product.nutriments.carbsPer100 ?: 0.0,
             fatPer100 = product.nutriments.fatPer100 ?: 0.0,
             fiberPer100 = product.nutriments.fiberPer100,
-            servingSizeG = product.servingSizeGrams,
+            servingSize = product.servingSize,
             imageUrl = product.imageUrl?.takeIf { it.isNotBlank() },
+            unit = if (product.isLiquid) FoodUnit.ML else FoodUnit.G,
         )
     }
 

@@ -102,6 +102,12 @@ sqldelight {
     }
 }
 
+// El módulo se llama composeApp por la plantilla de KMP, pero el fichero que
+// acaba en el móvil debe llamarse como la app: Gimnasio-debug.apk.
+base {
+    archivesName.set("Gimnasio")
+}
+
 android {
     namespace = "com.pelayo.gimnasio"
     compileSdk = 36

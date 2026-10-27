@@ -72,9 +72,6 @@ INSERT OR REPLACE INTO Equipment(id, nameEs) VALUES (?, ?);
 countMuscleGroups:
 SELECT COUNT(*) FROM MuscleGroup;
 
-selectAllMuscleGroups:
-SELECT * FROM MuscleGroup ORDER BY id;
-
 selectAllMuscles:
 SELECT * FROM Muscle ORDER BY id;
 
@@ -94,7 +91,23 @@ upsertExerciseByWgerId {
 
 insertCustomExercise:
 INSERT INTO Exercise(wgerId, nameEs, nameEn, descriptionEs, categoryId, videoUrl, metValue, exerciseType, isCustom, searchName)
-VALUES (NULL, ?, NULL, ?, NULL, NULL, ?, ?, 1, ?);
+VALUES (NULL, ?, NULL, ?, ?, ?, ?, ?, 1, ?);
+
+-- Solo los propios: los de wger los gestiona la sincronización.
+updateCustomExercise:
+UPDATE Exercise SET nameEs = ?, descriptionEs = ?, metValue = ?, exerciseType = ?, searchName = ?
+WHERE id = ? AND isCustom = 1;
+
+deleteCustomExercise:
+DELETE FROM Exercise WHERE id = ? AND isCustom = 1;
+
+-- Dónde se está usando un ejercicio: las rutinas y el historial lo referencian
+-- sin ON DELETE CASCADE, así que borrar sin mirar revienta con la clave foránea.
+countRoutineUsesForExercise:
+SELECT count(*) FROM RoutineExercise WHERE exerciseId = ?;
+
+countSetLogsForExercise:
+SELECT count(*) FROM SetLog WHERE exerciseId = ?;
 
 -- Para rellenar searchName en las bases de datos que vienen de antes de tenerlo.
 selectExercisesWithoutSearchName:
@@ -167,10 +180,15 @@ WHERE em.exerciseId = ?;
 -- Todos los ejercicios con el grupo muscular y equipo de cada uno; alimenta al
 -- generador de rutinas, que necesita el catálogo entero de una vez.
 selectExerciseGroups:
-SELECT e.id, e.nameEs, m.muscleGroupId, em.role
+SELECT e.id, e.nameEs, e.categoryId, m.muscleGroupId, em.role
 FROM Exercise e
 JOIN ExerciseMuscle em ON em.exerciseId = e.id
 JOIN Muscle m ON m.id = em.muscleId;
+
+-- Nombres de todo el catálogo, para reconocer los ejercicios de una rutina
+-- importada en texto. searchName va normalizado (minúsculas y sin tildes).
+selectExerciseNames:
+SELECT id, nameEs, nameEn, searchName, exerciseType, categoryId, isCustom FROM Exercise;
 
 selectAllExerciseEquipment:
 SELECT exerciseId, equipmentId FROM ExerciseEquipment;
@@ -180,3 +198,7 @@ SELECT eq.*
 FROM ExerciseEquipment ee
 JOIN Equipment eq ON eq.id = ee.equipmentId
 WHERE ee.exerciseId = ?;
+
+-- Para corregir el tipo de los isométricos que wger dio por repeticiones.
+updateExerciseType:
+UPDATE Exercise SET exerciseType = ? WHERE id = ?;

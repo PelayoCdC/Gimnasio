@@ -2,16 +2,22 @@ package com.pelayo.gimnasio.data.repository
 
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.calc.EnergyCalculator
+import com.pelayo.gimnasio.domain.calc.ExerciseFormatClassifier
 import com.pelayo.gimnasio.domain.calc.MuscleBalanceAnalyzer
+import com.pelayo.gimnasio.domain.calc.OneRepMaxCalculator
 import com.pelayo.gimnasio.domain.calc.PastPerformance
 import com.pelayo.gimnasio.domain.calc.ProgressionAdvisor
 import com.pelayo.gimnasio.domain.calc.ProgressionSuggestion
 import com.pelayo.gimnasio.domain.model.ActiveWorkout
 import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.domain.model.ExerciseType
+import com.pelayo.gimnasio.domain.model.PersonalRecords
 import com.pelayo.gimnasio.domain.model.ProgressPoint
+import com.pelayo.gimnasio.domain.calc.TimeProgressionSuggestion
 import com.pelayo.gimnasio.domain.model.SessionExerciseSummary
+import com.pelayo.gimnasio.domain.model.SessionRecord
 import com.pelayo.gimnasio.domain.model.SetLogItem
+import com.pelayo.gimnasio.util.oneDecimal
 import com.pelayo.gimnasio.domain.model.WorkoutExerciseProgress
 import com.pelayo.gimnasio.domain.model.WorkoutSummary
 import com.pelayo.gimnasio.util.nowIsoString
@@ -35,13 +41,15 @@ class WorkoutRepository(
      */
     suspend fun startSession(routineDayId: Long, date: LocalDate = today()): Long = withContext(dispatcher) {
         db.transactionWithResult {
-            val day = routines.selectRoutineDayById(routineDayId).executeAsOne()
+            // Si el día ya no existe (rutina borrada con la pantalla abierta),
+            // la sesión se abre como entrenamiento libre en vez de reventar.
+            val day = routines.selectRoutineDayById(routineDayId).executeAsOneOrNull()
             val existing = q.selectSessionsForDate(date.toString()).executeAsList()
                 .firstOrNull { it.routineDayId == routineDayId && it.isCompleted == 0L }
             existing?.id ?: run {
                 q.insertSession(
-                    routineId = day.routineId,
-                    routineDayId = routineDayId,
+                    routineId = day?.routineId,
+                    routineDayId = day?.let { routineDayId },
                     date = date.toString(),
                     startTime = nowIsoString(),
                     durationMinutes = null,
@@ -60,11 +68,21 @@ class WorkoutRepository(
         val day = dayId?.let { routines.selectRoutineDayById(it).executeAsOneOrNull() }
         val logged = q.selectSetsForSession(sessionId).executeAsList()
 
+        // El equipamiento se trae de una vez: hace falta para saber a qué ejercicios
+        // no tiene sentido pedirles kilos.
+        val equipmentByExercise = db.catalogQueries.selectAllExerciseEquipment().executeAsList()
+            .groupBy({ it.exerciseId }, { it.equipmentId })
+
         val exercises = dayId?.let { routines.selectExercisesForDay(it).executeAsList() }.orEmpty().map { planned ->
+            val previousRows = q.selectPreviousSetsForExercise(planned.exerciseId, sessionId).executeAsList()
             WorkoutExerciseProgress(
                 exerciseId = planned.exerciseId,
                 exerciseName = planned.nameEs,
                 exerciseType = ExerciseType.valueOf(planned.exerciseType),
+                isBodyweight = ExerciseFormatClassifier.isBodyweight(
+                    name = planned.nameEs,
+                    equipmentIds = equipmentByExercise[planned.exerciseId].orEmpty().toSet(),
+                ),
                 metValue = planned.metValue,
                 imageUrl = planned.mainImageUrl,
                 targetSets = planned.targetSets.toInt(),
@@ -73,13 +91,18 @@ class WorkoutRepository(
                 targetTimeSeconds = planned.targetTimeSeconds?.toInt(),
                 restSeconds = planned.restSeconds.toInt(),
                 loggedSets = logged.filter { it.exerciseId == planned.exerciseId }.map { it.toItem() },
-                previousSets = q.selectLastSetsForExercise(planned.exerciseId).executeAsList()
-                    .filter { it.sessionId != sessionId }
-                    .map { it.toItem() },
+                previousSets = previousRows.map { it.toItem() },
+                previousDate = previousRows.firstOrNull()?.date?.let { LocalDate.parse(it) },
                 progression = progressionSuggestion(
                     exerciseId = planned.exerciseId,
                     targetSets = planned.targetSets.toInt(),
                     targetRepsMax = planned.targetRepsMax?.toInt(),
+                ),
+                timeProgression = timeProgressionSuggestion(
+                    exerciseId = planned.exerciseId,
+                    exerciseType = ExerciseType.valueOf(planned.exerciseType),
+                    targetSets = planned.targetSets.toInt(),
+                    targetTimeSeconds = planned.targetTimeSeconds?.toInt(),
                 ),
             )
         }
@@ -115,6 +138,7 @@ class WorkoutRepository(
         reps: Int?,
         timeSeconds: Int?,
         isWarmup: Boolean = false,
+        rpe: Double? = null,
     ): Long = withContext(dispatcher) {
         db.transactionWithResult {
             q.insertSetLog(
@@ -125,7 +149,7 @@ class WorkoutRepository(
                 reps = reps?.toLong(),
                 timeSeconds = timeSeconds?.toLong(),
                 isWarmup = if (isWarmup) 1 else 0,
-                rpe = null,
+                rpe = rpe,
             )
             db.catalogQueries.lastInsertRowId().executeAsOne()
         }
@@ -137,15 +161,30 @@ class WorkoutRepository(
         q.updateSessionNotes(notes?.takeIf { it.isNotBlank() }, sessionId)
     }
 
-    /** Corrige una serie ya registrada, también en sesiones ya terminadas. */
+    /**
+     * Corrige una serie ya registrada, también en sesiones ya terminadas. Los
+     * campos que no se pasan (calentamiento, RPE) conservan su valor: corregir
+     * un peso no debe convertir un calentamiento en serie efectiva.
+     */
     suspend fun updateSet(
         setId: Long,
         weightKg: Double?,
         reps: Int?,
         timeSeconds: Int?,
-        isWarmup: Boolean = false,
+        isWarmup: Boolean? = null,
+        rpe: Double? = null,
     ) = withContext(dispatcher) {
-        q.updateSetLog(weightKg, reps?.toLong(), timeSeconds?.toLong(), if (isWarmup) 1 else 0, null, setId)
+        db.transaction {
+            val current = q.selectSetLogById(setId).executeAsOneOrNull() ?: return@transaction
+            q.updateSetLog(
+                weightKg,
+                reps?.toLong(),
+                timeSeconds?.toLong(),
+                if (isWarmup ?: (current.isWarmup == 1L)) 1 else 0,
+                rpe ?: current.rpe,
+                setId,
+            )
+        }
     }
 
     /**
@@ -173,7 +212,9 @@ class WorkoutRepository(
         val session = q.selectSessionById(sessionId).executeAsOneOrNull() ?: return@withContext
         if (session.isCompleted != 1L) return@withContext
         val kcal = estimateSessionKcal(sessionId, bodyWeightKg)
-        q.completeSession(session.durationMinutes ?: 0L, kcal, session.notes, sessionId)
+        // La duración se conserva tal cual, aunque sea nula: recalcular el gasto
+        // no debe inventarse un "0 minutos".
+        q.completeSession(session.durationMinutes, kcal, session.notes, sessionId)
     }
 
     suspend fun completeSession(
@@ -193,7 +234,10 @@ class WorkoutRepository(
     suspend fun estimateSessionKcal(sessionId: Long, bodyWeightKg: Double?): Double? =
         withContext(dispatcher) {
             if (bodyWeightKg == null || bodyWeightKg <= 0) return@withContext null
+            // Sin calentamientos, el mismo criterio que el recuento de series y el
+            // volumen que se enseñan al lado.
             val sets = q.selectSetsForSession(sessionId).executeAsList()
+                .filter { it.isWarmup == 0L }
             if (sets.isEmpty()) return@withContext 0.0
 
             val restByExercise = q.selectSessionById(sessionId).executeAsOneOrNull()
@@ -207,7 +251,9 @@ class WorkoutRepository(
                 val secondsPerSet = rows.mapNotNull { it.timeSeconds?.toDouble() }.average()
                     .takeIf { !it.isNaN() } ?: EnergyCalculator.DEFAULT_SECONDS_PER_REP_SET
                 EnergyCalculator.exerciseKcal(
-                    met = exercise.metValue,
+                    // Un MET a 0 o negativo (un backup retocado, un ejercicio propio
+                    // mal creado) no debe tumbar el cierre del entreno.
+                    met = exercise.metValue.takeIf { it > 0 } ?: 3.5,
                     weightKg = bodyWeightKg,
                     sets = rows.size,
                     secondsPerSet = secondsPerSet,
@@ -217,6 +263,15 @@ class WorkoutRepository(
         }
 
     suspend fun deleteSession(sessionId: Long) = withContext(dispatcher) { q.deleteSession(sessionId) }
+
+    /**
+     * Cuándo se abrió la sesión (persistido al crearla). Es la referencia buena
+     * para la duración: medir desde que se abre la *pantalla* reiniciaba el
+     * cronómetro al retomar una sesión.
+     */
+    suspend fun sessionStartTime(sessionId: Long): String? = withContext(dispatcher) {
+        q.selectSessionById(sessionId).executeAsOneOrNull()?.startTime
+    }
 
     suspend fun summary(sessionId: Long): WorkoutSummary? = withContext(dispatcher) {
         val session = q.selectSessionById(sessionId).executeAsOneOrNull() ?: return@withContext null
@@ -231,8 +286,15 @@ class WorkoutRepository(
             )
         }
 
-        val muscleGroups = byExercise
-            .flatMap { db.catalogQueries.selectMusclesForExercise(it.exerciseId).executeAsList() }
+        // Los músculos de cada ejercicio se consultan una sola vez y sirven para
+        // las dos agregaciones de abajo.
+        val musclesByExercise = byExercise.associate { exercise ->
+            exercise.exerciseId to
+                db.catalogQueries.selectMusclesForExercise(exercise.exerciseId).executeAsList()
+        }
+
+        val muscleGroups = musclesByExercise.values
+            .flatten()
             .filter { it.role == "PRIMARY" }
             .mapNotNull { com.pelayo.gimnasio.domain.model.MuscleGroups.byId(it.muscleGroupId)?.name }
             .distinct()
@@ -241,16 +303,15 @@ class WorkoutRepository(
         val volumeByGroup = mutableMapOf<Long, Double>()
         byExercise.forEach { exercise ->
             val setCount = exercise.sets.count { !it.isWarmup }
-            db.catalogQueries.selectMusclesForExercise(exercise.exerciseId).executeAsList()
-                .forEach { muscle ->
-                    val weight = if (muscle.role == "PRIMARY") {
-                        MuscleBalanceAnalyzer.PRIMARY_WEIGHT
-                    } else {
-                        MuscleBalanceAnalyzer.SECONDARY_WEIGHT
-                    }
-                    volumeByGroup[muscle.muscleGroupId] =
-                        (volumeByGroup[muscle.muscleGroupId] ?: 0.0) + setCount * weight
+            musclesByExercise[exercise.exerciseId].orEmpty().forEach { muscle ->
+                val weight = if (muscle.role == "PRIMARY") {
+                    MuscleBalanceAnalyzer.PRIMARY_WEIGHT
+                } else {
+                    MuscleBalanceAnalyzer.SECONDARY_WEIGHT
                 }
+                volumeByGroup[muscle.muscleGroupId] =
+                    (volumeByGroup[muscle.muscleGroupId] ?: 0.0) + setCount * weight
+            }
         }
 
         WorkoutSummary(
@@ -277,14 +338,19 @@ class WorkoutRepository(
         targetSets: Int,
         targetRepsMax: Int?,
     ): ProgressionSuggestion? = withContext(dispatcher) {
+        // La consulta ya viene ordenada por fecha descendente (y no por id: una
+        // sesión corregida con fecha pasada no es "la última") y groupBy conserva
+        // ese orden de aparición.
         val sessions = q.selectRecentSetsForExercise(exerciseId).executeAsList()
             .groupBy { it.sessionKey }
             .entries
-            .sortedByDescending { it.key }
-            .take(ProgressionAdvisor.SESSIONS_REQUIRED)
+            // Las que necesite la regla más exigente: la subida mira 2 y el deload 3.
+            .take(maxOf(ProgressionAdvisor.SESSIONS_REQUIRED, ProgressionAdvisor.STALL_SESSIONS))
             .map { (_, rows) ->
                 PastPerformance(
-                    weightKg = rows.firstOrNull()?.weightKg,
+                    // El peso de trabajo es el mejor de la sesión: la primera serie
+                    // puede ser una aproximación más ligera.
+                    weightKg = rows.mapNotNull { it.weightKg }.maxOrNull(),
                     reps = rows.mapNotNull { it.reps?.toInt() },
                 )
             }
@@ -302,20 +368,105 @@ class WorkoutRepository(
         )
     }
 
+    /** La doble progresión de los ejercicios por tiempo; null si no es de tiempo. */
+    private suspend fun timeProgressionSuggestion(
+        exerciseId: Long,
+        exerciseType: ExerciseType,
+        targetSets: Int,
+        targetTimeSeconds: Int?,
+    ): TimeProgressionSuggestion? = withContext(dispatcher) {
+        if (exerciseType != ExerciseType.TIME) return@withContext null
+        val sessions = q.selectRecentSetsForExercise(exerciseId).executeAsList()
+            .groupBy { it.sessionKey }
+            .entries
+            .take(ProgressionAdvisor.SESSIONS_REQUIRED)
+            .map { (_, rows) -> rows.mapNotNull { it.timeSeconds?.toInt() } }
+        ProgressionAdvisor.suggestTime(sessions, targetSets, targetTimeSeconds)
+    }
+
+    /**
+     * Récords batidos en la sesión respecto a todo lo anterior a ella. Solo se
+     * celebra cuando hay historial previo: la primera sesión de un ejercicio lo
+     * sería todo y no diría nada.
+     */
+    suspend fun newRecordsInSession(sessionId: Long): List<SessionRecord> = withContext(dispatcher) {
+        val session = q.selectSessionById(sessionId).executeAsOneOrNull()
+            ?: return@withContext emptyList()
+        if (session.isCompleted != 1L) return@withContext emptyList()
+
+        val sessionSets = q.selectSetsForSession(sessionId).executeAsList()
+            .filter { it.isWarmup == 0L }
+
+        sessionSets.groupBy { it.exerciseId }.mapNotNull { (exerciseId, rows) ->
+            val prior = q.selectSetsForExercise(exerciseId).executeAsList()
+                .filter { it.sessionId != sessionId }
+            if (prior.isEmpty()) return@mapNotNull null
+
+            val name = rows.first().nameEs
+            val improvements = buildList {
+                val bestWeight = rows.mapNotNull { it.weightKg }.maxOrNull()
+                val priorWeight = prior.mapNotNull { it.weightKg }.maxOrNull()
+                if (bestWeight != null && priorWeight != null && bestWeight > priorWeight) {
+                    add("${bestWeight.oneDecimal()} kg (antes ${priorWeight.oneDecimal()})")
+                }
+
+                val best1RM = rows.mapNotNull {
+                    OneRepMaxCalculator.estimate(it.weightKg, it.reps?.toInt())
+                }.maxOrNull()
+                val prior1RM = prior.mapNotNull {
+                    OneRepMaxCalculator.estimate(it.weightKg, it.reps?.toInt())
+                }.maxOrNull()
+                if (best1RM != null && prior1RM != null && best1RM > prior1RM) {
+                    add("1RM estimado ${best1RM.oneDecimal()} kg")
+                }
+
+                val bestTime = rows.mapNotNull { it.timeSeconds?.toInt() }.maxOrNull()
+                val priorTime = prior.mapNotNull { it.timeSeconds?.toInt() }.maxOrNull()
+                if (bestTime != null && priorTime != null && bestTime > priorTime) {
+                    add("$bestTime s (antes $priorTime)")
+                }
+            }
+            improvements.takeIf { it.isNotEmpty() }
+                ?.let { SessionRecord(name, it.joinToString(" · ")) }
+        }
+    }
+
     /** Serie histórica de un ejercicio, un punto por sesión, para las gráficas. */
     suspend fun progressHistory(exerciseId: Long): List<ProgressPoint> = withContext(dispatcher) {
         q.selectSetsForExercise(exerciseId).executeAsList()
-            .groupBy { it.date }
-            .map { (date, rows) ->
+            // Por sesión y no por fecha: dos sesiones el mismo día son dos puntos.
+            .groupBy { it.sessionId }
+            .map { (_, rows) ->
                 ProgressPoint(
-                    date = LocalDate.parse(date),
+                    date = LocalDate.parse(rows.first().date),
                     maxWeight = rows.mapNotNull { it.weightKg }.maxOrNull() ?: 0.0,
                     volume = rows.sumOf { (it.weightKg ?: 0.0) * (it.reps ?: 0L).toInt() },
                     maxReps = rows.mapNotNull { it.reps?.toInt() }.maxOrNull() ?: 0,
                     maxTimeSeconds = rows.mapNotNull { it.timeSeconds?.toInt() }.maxOrNull() ?: 0,
+                    best1RM = rows.mapNotNull {
+                        OneRepMaxCalculator.estimate(it.weightKg, it.reps?.toInt())
+                    }.maxOrNull(),
                 )
             }
             .sortedBy { it.date }
+    }
+
+    /**
+     * Mejores marcas históricas del ejercicio; null si nunca se ha entrenado.
+     * Solo sesiones completadas y sin calentamientos, igual que la gráfica.
+     */
+    suspend fun personalRecords(exerciseId: Long): PersonalRecords? = withContext(dispatcher) {
+        val rows = q.selectSetsForExercise(exerciseId).executeAsList()
+        if (rows.isEmpty()) return@withContext null
+        PersonalRecords(
+            maxWeightKg = rows.mapNotNull { it.weightKg }.maxOrNull(),
+            maxReps = rows.mapNotNull { it.reps?.toInt() }.maxOrNull(),
+            maxTimeSeconds = rows.mapNotNull { it.timeSeconds?.toInt() }.maxOrNull(),
+            bestEstimated1RM = rows.mapNotNull {
+                OneRepMaxCalculator.estimate(it.weightKg, it.reps?.toInt())
+            }.maxOrNull(),
+            sessions = rows.distinctBy { it.sessionId }.size,
+        )
     }
 
     suspend fun recentSessions(limit: Int = 10): List<WorkoutSummary> = withContext(dispatcher) {
@@ -371,6 +522,7 @@ private fun com.pelayo.gimnasio.db.SelectSetsForSession.toItem() = SetLogItem(
     reps = reps?.toInt(),
     timeSeconds = timeSeconds?.toInt(),
     isWarmup = isWarmup == 1L,
+    rpe = rpe,
 )
 
 private fun com.pelayo.gimnasio.db.SetLog.toItem() = SetLogItem(
@@ -381,4 +533,16 @@ private fun com.pelayo.gimnasio.db.SetLog.toItem() = SetLogItem(
     reps = reps?.toInt(),
     timeSeconds = timeSeconds?.toInt(),
     isWarmup = isWarmup == 1L,
+    rpe = rpe,
+)
+
+private fun com.pelayo.gimnasio.db.SelectPreviousSetsForExercise.toItem() = SetLogItem(
+    id = id,
+    exerciseId = exerciseId,
+    setNumber = setNumber.toInt(),
+    weightKg = weightKg,
+    reps = reps?.toInt(),
+    timeSeconds = timeSeconds?.toInt(),
+    isWarmup = isWarmup == 1L,
+    rpe = rpe,
 )

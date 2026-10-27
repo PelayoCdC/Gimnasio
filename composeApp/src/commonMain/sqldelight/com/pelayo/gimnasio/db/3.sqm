@@ -1,0 +1,7 @@
+-- Los alimentos pasan a saber si se miden en gramos o en mililitros.
+--
+-- Lo que ya estuviera guardado se queda en gramos: desde SQL no hay manera de
+-- saber que una leche era líquida. Se corrige solo al volver a bajar el producto
+-- de Open Food Facts (el upsert trae la unidad), o a mano desde su ficha en el
+-- catálogo.
+ALTER TABLE Food ADD COLUMN unit TEXT NOT NULL DEFAULT 'G';

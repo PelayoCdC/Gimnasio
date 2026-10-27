@@ -1,6 +1,7 @@
 package com.pelayo.gimnasio.data.remote
 
 import com.pelayo.gimnasio.data.remote.HttpClientFactory.json
+import com.pelayo.gimnasio.domain.model.FoodUnit
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -49,7 +50,7 @@ class OffMapperTest {
         assertEquals(57.5, food.carbsPer100)
         assertEquals(30.9, food.fatPer100)
         assertNull(food.fiberPer100)
-        assertEquals(15.0, food.servingSizeG)
+        assertEquals(15.0, food.servingSize)
     }
 
     @Test
@@ -57,14 +58,56 @@ class OffMapperTest {
         // OFF devuelve este campo unas veces entrecomillado y otras como número.
         val numeric = nutellaJson.replace("\"serving_quantity\": \"15\"", "\"serving_quantity\": 15.5")
         val response = json.decodeFromString<OffProductResponse>(numeric)
-        assertEquals(15.5, OffMapper.map(response.product!!)!!.servingSizeG)
+        assertEquals(15.5, OffMapper.map(response.product!!)!!.servingSize)
     }
 
     @Test
     fun sin_serving_quantity_queda_a_null() {
         val without = nutellaJson.replace("\"serving_quantity\": \"15\",", "")
         val response = json.decodeFromString<OffProductResponse>(without)
-        assertNull(OffMapper.map(response.product!!)!!.servingSizeG)
+        assertNull(OffMapper.map(response.product!!)!!.servingSize)
+    }
+
+    @Test
+    fun los_solidos_van_en_gramos() {
+        val response = json.decodeFromString<OffProductResponse>(nutellaJson)
+        assertEquals(FoodUnit.G, OffMapper.map(response.product!!)!!.unit)
+    }
+
+    @Test
+    fun la_unidad_de_la_racion_manda_sobre_la_del_producto() {
+        val leche = nutellaJson.replace(
+            "\"serving_quantity\": \"15\",",
+            "\"serving_quantity\": 250, \"serving_quantity_unit\": \"ml\",",
+        )
+        val product = json.decodeFromString<OffProductResponse>(leche).product!!
+        assertEquals(FoodUnit.ML, OffMapper.map(product)!!.unit)
+    }
+
+    @Test
+    fun sin_unidad_de_racion_vale_la_del_producto() {
+        val leche = nutellaJson.replace(
+            "\"serving_quantity\": \"15\",",
+            "\"product_quantity_unit\": \"ml\",",
+        )
+        val product = json.decodeFromString<OffProductResponse>(leche).product!!
+        assertEquals(FoodUnit.ML, OffMapper.map(product)!!.unit)
+    }
+
+    @Test
+    fun como_ultimo_recurso_la_unidad_sale_del_texto_de_la_cantidad() {
+        // Muchos productos solo traen "quantity" en texto libre.
+        val litro = nutellaJson.replace("\"serving_quantity\": \"15\",", "\"quantity\": \"1 L\",")
+        assertEquals(
+            FoodUnit.ML,
+            OffMapper.map(json.decodeFromString<OffProductResponse>(litro).product!!)!!.unit,
+        )
+
+        val gramos = nutellaJson.replace("\"serving_quantity\": \"15\",", "\"quantity\": \"400 g\",")
+        assertEquals(
+            FoodUnit.G,
+            OffMapper.map(json.decodeFromString<OffProductResponse>(gramos).product!!)!!.unit,
+        )
     }
 
     @Test

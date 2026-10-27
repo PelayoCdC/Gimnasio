@@ -23,6 +23,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/** Días en ISO, como los guarda el plan. El 25/7/2026 cae en sábado. */
+private const val LUNES = 1
+private const val MARTES = 2
+private const val SABADO = 6
+
 class DietPlanTest {
 
     private fun repo(): NutritionRepository {
@@ -63,15 +68,17 @@ class DietPlanTest {
         val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
         val pollo = repo.createCustomFood("Pollo", null, 165.0, 31.0, 0.0, 3.6)
 
-        repo.addFoodToDietPlan(planId, MealType.DESAYUNO, avena, grams = 100.0)
-        repo.addFoodToDietPlan(planId, MealType.COMIDA, pollo, grams = 200.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, avena, grams = 100.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.COMIDA, pollo, grams = 200.0)
 
         val plan = assertNotNull(repo.dietPlan(planId))
-        assertClose(380.0 + 330.0, plan.plannedMacros.kcal)
-        assertClose(13.0 + 62.0, plan.plannedMacros.protein)
-        assertEquals(1, plan.mealsFor(MealType.DESAYUNO).size)
-        assertEquals(1, plan.mealsFor(MealType.COMIDA).size)
-        assertTrue(plan.mealsFor(MealType.CENA).isEmpty())
+        assertClose(380.0 + 330.0, plan.plannedMacros(LUNES).kcal)
+        assertClose(13.0 + 62.0, plan.plannedMacros(LUNES).protein)
+        assertEquals(1, plan.mealsFor(LUNES, MealType.DESAYUNO).size)
+        assertEquals(1, plan.mealsFor(LUNES, MealType.COMIDA).size)
+        assertTrue(plan.mealsFor(LUNES, MealType.CENA).isEmpty())
+        // Lo del lunes no se cuela en los demás días.
+        assertClose(0.0, plan.plannedMacros(MARTES).kcal)
     }
 
     @Test
@@ -82,9 +89,9 @@ class DietPlanTest {
         val recipeId = repo.createRecipe("Arroz simple", servings = 2, notes = null)
         repo.addIngredient(recipeId, arroz, grams = 200.0) // 200 kcal → 100 por ración
 
-        repo.addRecipeToDietPlan(planId, MealType.CENA, recipeId, servings = 1.5)
+        repo.addRecipeToDietPlan(planId, LUNES, MealType.CENA, recipeId, servings = 1.5)
 
-        val meal = assertNotNull(repo.dietPlan(planId)).mealsFor(MealType.CENA).single()
+        val meal = assertNotNull(repo.dietPlan(planId)).mealsFor(LUNES, MealType.CENA).single()
         assertEquals("1.5 raciones", meal.quantityLabel)
         assertClose(150.0, meal.macros.kcal)
     }
@@ -92,12 +99,12 @@ class DietPlanTest {
     @Test
     fun aplicar_el_plan_vuelca_el_menu_al_diario() = runTest {
         val repo = repo()
-        val date = LocalDate(2026, 7, 25)
+        val date = LocalDate(2026, 7, 25) // sábado
         val planId = repo.createDietPlan("Dieta", null, null, null, null)
         val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
         val pollo = repo.createCustomFood("Pollo", null, 165.0, 31.0, 0.0, 3.6)
-        repo.addFoodToDietPlan(planId, MealType.DESAYUNO, avena, 100.0)
-        repo.addFoodToDietPlan(planId, MealType.COMIDA, pollo, 200.0)
+        repo.addFoodToDietPlan(planId, SABADO, MealType.DESAYUNO, avena, 100.0)
+        repo.addFoodToDietPlan(planId, SABADO, MealType.COMIDA, pollo, 200.0)
 
         val added = repo.applyDietPlanToDay(planId, date)
 
@@ -106,6 +113,68 @@ class DietPlanTest {
         assertClose(710.0, day.total.kcal)
         assertEquals("Avena", day.entriesByMeal[MealType.DESAYUNO]!!.single().name)
         assertEquals("100 g", day.entriesByMeal[MealType.DESAYUNO]!!.single().quantityLabel)
+    }
+
+    @Test
+    fun aplicar_el_plan_solo_vuelca_el_dia_de_la_semana_que_toca() = runTest {
+        val repo = repo()
+        val sabado = LocalDate(2026, 7, 25)
+        val planId = repo.createDietPlan("Dieta", null, null, null, null)
+        val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
+        val pollo = repo.createCustomFood("Pollo", null, 165.0, 31.0, 0.0, 3.6)
+        repo.addFoodToDietPlan(planId, SABADO, MealType.DESAYUNO, avena, 100.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.COMIDA, pollo, 200.0)
+
+        assertEquals(1, repo.applyDietPlanToDay(planId, sabado))
+
+        val day = repo.dayNutrition(sabado)
+        assertEquals(listOf("Avena"), day.entriesByMeal.values.flatten().map { it.name })
+    }
+
+    @Test
+    fun copiar_un_dia_reemplaza_el_menu_del_destino() = runTest {
+        val repo = repo()
+        val planId = repo.createDietPlan("Dieta", null, null, null, null)
+        val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
+        val pollo = repo.createCustomFood("Pollo", null, 165.0, 31.0, 0.0, 3.6)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, avena, 100.0)
+        repo.addFoodToDietPlan(planId, MARTES, MealType.CENA, pollo, 300.0)
+
+        assertEquals(1, repo.copyDietPlanDay(planId, fromDay = LUNES, toDay = MARTES))
+
+        val plan = assertNotNull(repo.dietPlan(planId))
+        val martes = plan.mealsForDay(MARTES).single()
+        assertEquals("Avena", martes.name)
+        assertEquals(MealType.DESAYUNO, martes.mealType)
+        // El original sigue donde estaba.
+        assertEquals("Avena", plan.mealsForDay(LUNES).single().name)
+    }
+
+    @Test
+    fun copiar_un_dia_vacio_no_borra_el_destino() = runTest {
+        val repo = repo()
+        val planId = repo.createDietPlan("Dieta", null, null, null, null)
+        val pollo = repo.createCustomFood("Pollo", null, 165.0, 31.0, 0.0, 3.6)
+        repo.addFoodToDietPlan(planId, MARTES, MealType.CENA, pollo, 300.0)
+
+        assertEquals(0, repo.copyDietPlanDay(planId, fromDay = LUNES, toDay = MARTES))
+
+        assertEquals("Pollo", repo.dietPlan(planId)!!.mealsForDay(MARTES).single().name)
+    }
+
+    @Test
+    fun cambiar_la_cantidad_y_la_comida_de_una_entrada_del_plan() = runTest {
+        val repo = repo()
+        val planId = repo.createDietPlan("Dieta", null, null, null, null)
+        val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, avena, 100.0)
+        val mealId = repo.dietPlan(planId)!!.meals.single().id
+
+        repo.updateDietPlanMeal(mealId, LUNES, MealType.CENA, grams = 50.0, servings = null)
+
+        val meal = assertNotNull(repo.dietPlan(planId)).mealsFor(LUNES, MealType.CENA).single()
+        assertEquals(50.0, meal.grams)
+        assertClose(190.0, meal.macros.kcal)
     }
 
     @Test
@@ -132,12 +201,12 @@ class DietPlanTest {
         val repo = repo()
         val planId = repo.createDietPlan("Dieta", null, null, null, null)
         val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
-        repo.addFoodToDietPlan(planId, MealType.DESAYUNO, avena, 100.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, avena, 100.0)
 
         val mealId = repo.dietPlan(planId)!!.meals.single().id
         repo.removeDietPlanMeal(mealId)
 
-        assertClose(0.0, repo.dietPlan(planId)!!.plannedMacros.kcal)
+        assertClose(0.0, repo.dietPlan(planId)!!.plannedMacros(LUNES).kcal)
     }
 
     @Test
@@ -145,7 +214,7 @@ class DietPlanTest {
         val repo = repo()
         val planId = repo.createDietPlan("Dieta", null, null, null, null)
         val avena = repo.createCustomFood("Avena", null, 380.0, 13.0, 60.0, 7.0)
-        repo.addFoodToDietPlan(planId, MealType.DESAYUNO, avena, 100.0)
+        repo.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, avena, 100.0)
 
         repo.deleteDietPlan(planId)
 

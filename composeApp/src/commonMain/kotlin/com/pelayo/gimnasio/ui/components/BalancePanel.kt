@@ -32,6 +32,7 @@ import com.pelayo.gimnasio.domain.calc.CoverageLevel
 import com.pelayo.gimnasio.domain.calc.MuscleBalanceAnalyzer
 import com.pelayo.gimnasio.domain.calc.WarningSeverity
 import com.pelayo.gimnasio.ui.theme.WarningAmber
+import com.pelayo.gimnasio.util.oneDecimal
 
 /**
  * Muestra el volumen semanal por grupo muscular y los avisos de descompensación.
@@ -89,7 +90,7 @@ fun BalancePanel(report: BalanceReport, modifier: Modifier = Modifier) {
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = score.effectiveSets.formatSets(),
+                        text = score.effectiveSets.oneDecimal(),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.width(32.dp),
@@ -132,5 +133,3 @@ private fun CoverageLevel.color(): Color = when (this) {
     CoverageLevel.EXCESIVO -> MaterialTheme.colorScheme.tertiary
 }
 
-private fun Double.formatSets(): String =
-    if (this == toLong().toDouble()) toLong().toString() else ((this * 10).toLong() / 10.0).toString()

@@ -25,7 +25,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.pelayo.gimnasio.util.oneDecimal
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import com.pelayo.gimnasio.domain.model.MuscleGroupInfo
@@ -56,7 +59,19 @@ fun MuscleMap(
         return activeColor.copy(alpha = intensity.toFloat())
     }
 
-    Column(modifier) {
+    // La silueta es un Canvas mudo para el lector de pantalla: se describe con
+    // los grupos trabajados y sus series efectivas.
+    val worked = MuscleGroups.all
+        .mapNotNull { group ->
+            volumeByGroup[group.id]?.takeIf { it > 0 }?.let { "${group.name} ${it.oneDecimal()}" }
+        }
+    val mapDescription = if (worked.isEmpty()) {
+        "Mapa muscular sin volumen registrado"
+    } else {
+        "Mapa muscular, series efectivas por grupo: ${worked.joinToString(", ")}"
+    }
+
+    Column(modifier.semantics { contentDescription = mapDescription }) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Canvas(Modifier.fillMaxWidth().aspectRatio(0.5f)) {

@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,7 +46,14 @@ import com.pelayo.gimnasio.domain.model.BodyMetrics
 import com.pelayo.gimnasio.domain.model.Sex
 import com.pelayo.gimnasio.domain.model.UserProfileData
 import com.pelayo.gimnasio.domain.model.labelEs
+import com.pelayo.gimnasio.ui.components.ConfirmDeleteDialog
+import com.pelayo.gimnasio.ui.components.DatePickerField
 import com.pelayo.gimnasio.ui.components.LineChart
+import com.pelayo.gimnasio.util.formatDayMonthEs
+import com.pelayo.gimnasio.util.formatLongEs
+import com.pelayo.gimnasio.util.formatShortEs
+import com.pelayo.gimnasio.util.oneDecimal
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.datetime.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.roundToInt
@@ -63,6 +69,14 @@ fun ProfileScreen(
     val measurements by viewModel.measurements.collectAsState()
     var showProfileDialog by remember { mutableStateOf(false) }
     var showMeasurementDialog by remember { mutableStateOf(false) }
+    var measurementToDelete by remember { mutableStateOf<BodyMeasurementEntry?>(null) }
+
+    // Como el resto de pantallas: al volver (p. ej. de restaurar una copia en
+    // Ajustes) el perfil debe reflejar los datos nuevos, no los de antes.
+    LifecycleResumeEffect(Unit) {
+        viewModel.reload()
+        onPauseOrDispose { }
+    }
 
     Scaffold(
         topBar = {
@@ -136,7 +150,7 @@ fun ProfileScreen(
                             LineChart(
                                 // measurements viene de más reciente a más antiguo.
                                 values = measurements.reversed().map { it.weightKg },
-                                labels = measurements.reversed().map { it.date.toString() },
+                                labels = measurements.reversed().map { it.date.formatShortEs() },
                                 unit = " kg",
                             )
                         }
@@ -155,7 +169,7 @@ fun ProfileScreen(
             } else {
                 measurements.forEach { entry ->
                     item(key = "m-${entry.id}") {
-                        MeasurementRow(entry, onDelete = { viewModel.deleteMeasurement(entry.id) })
+                        MeasurementRow(entry, onDelete = { measurementToDelete = entry })
                     }
                 }
             }
@@ -166,8 +180,8 @@ fun ProfileScreen(
         ProfileDialog(
             current = profile,
             onDismiss = { showProfileDialog = false },
-            onSave = { name, sex, birthDate, height, activity ->
-                viewModel.saveProfile(name, sex, birthDate, height, activity)
+            onSave = { name, sex, birthDate, height, activity, targetWeight ->
+                viewModel.saveProfile(name, sex, birthDate, height, activity, targetWeight)
                 showProfileDialog = false
             },
         )
@@ -177,9 +191,22 @@ fun ProfileScreen(
         MeasurementDialog(
             sex = profile?.sex ?: Sex.M,
             onDismiss = { showMeasurementDialog = false },
-            onSave = { weight, neck, waist, hip ->
-                viewModel.addMeasurement(weight, neck, waist, hip)
+            onSave = { weight, neck, waist, hip, date ->
+                viewModel.addMeasurement(weight, neck, waist, hip, date)
                 showMeasurementDialog = false
+            },
+        )
+    }
+
+    measurementToDelete?.let { entry ->
+        ConfirmDeleteDialog(
+            title = "¿Borrar la medición del ${entry.date.formatDayMonthEs()}?",
+            text = "Alimenta el IMC, el gasto calórico y la gráfica de peso; borrada, " +
+                "esos cálculos usan la anterior.",
+            onDismiss = { measurementToDelete = null },
+            onConfirm = {
+                viewModel.deleteMeasurement(entry.id)
+                measurementToDelete = null
             },
         )
     }
@@ -206,16 +233,27 @@ private fun MetricsCard(metrics: BodyMetrics) {
             metrics.leanMassKg?.let { lean ->
                 MetricRow(label = "Masa magra", value = "${lean.oneDecimal()} kg", hint = "Peso sin grasa")
             }
-            MetricRow(
-                label = "Gasto basal (BMR)",
-                value = "${metrics.bmr.roundToInt()} kcal",
-                hint = "Lo que quemas en reposo (Mifflin-St Jeor)",
-            )
-            MetricRow(
-                label = "Gasto diario (TDEE)",
-                value = "${metrics.tdee.roundToInt()} kcal",
-                hint = "Basal × factor de actividad",
-            )
+            metrics.bmr?.let { bmr ->
+                MetricRow(
+                    label = "Gasto basal (BMR)",
+                    value = "${bmr.roundToInt()} kcal",
+                    hint = "Lo que quemas en reposo (Mifflin-St Jeor)",
+                )
+            }
+            metrics.tdee?.let { tdee ->
+                MetricRow(
+                    label = "Gasto diario (TDEE)",
+                    value = "${tdee.roundToInt()} kcal",
+                    hint = "Basal × factor de actividad",
+                )
+            }
+            if (metrics.bmr == null) {
+                Text(
+                    "Añade tu fecha de nacimiento para calcular el gasto basal y el diario.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Text(
                 "Son estimaciones orientativas, no un diagnóstico médico.",
@@ -251,7 +289,7 @@ private fun MeasurementRow(entry: BodyMeasurementEntry, onDelete: () -> Unit) {
                 Text("${entry.weightKg.oneDecimal()} kg", style = MaterialTheme.typography.titleSmall)
                 Text(
                     buildString {
-                        append(entry.date.toString())
+                        append(entry.date.formatLongEs())
                         entry.bodyFatPercent?.let { append(" · ${it.oneDecimal()} % grasa") }
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -269,16 +307,14 @@ private fun MeasurementRow(entry: BodyMeasurementEntry, onDelete: () -> Unit) {
 private fun ProfileDialog(
     current: UserProfileData?,
     onDismiss: () -> Unit,
-    onSave: (String?, Sex, LocalDate?, Double?, ActivityLevel) -> Unit,
+    onSave: (String?, Sex, LocalDate?, Double?, ActivityLevel, Double?) -> Unit,
 ) {
     var name by remember { mutableStateOf(current?.name ?: "") }
     var sex by remember { mutableStateOf(current?.sex ?: Sex.M) }
-    var birthDate by remember { mutableStateOf(current?.birthDate?.toString() ?: "") }
+    var birthDate by remember { mutableStateOf(current?.birthDate) }
     var height by remember { mutableStateOf(current?.heightCm?.oneDecimal() ?: "") }
     var activity by remember { mutableStateOf(current?.activityLevel ?: ActivityLevel.LIGERO) }
-
-    val parsedDate = runCatching { LocalDate.parse(birthDate) }.getOrNull()
-    val dateError = birthDate.isNotBlank() && parsedDate == null
+    var targetWeight by remember { mutableStateOf(current?.targetWeightKg?.oneDecimal() ?: "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -305,18 +341,12 @@ private fun ProfileDialog(
                     }
                 }
                 item {
-                    OutlinedTextField(
+                    // Con calendario: era la única fecha de la app que se tecleaba
+                    // a mano en formato ISO.
+                    DatePickerField(
+                        label = "Fecha de nacimiento",
                         value = birthDate,
-                        onValueChange = { birthDate = it },
-                        label = { Text("Fecha de nacimiento") },
-                        placeholder = { Text("AAAA-MM-DD") },
-                        isError = dateError,
-                        supportingText = if (dateError) {
-                            { Text("Formato AAAA-MM-DD") }
-                        } else {
-                            null
-                        },
-                        singleLine = true,
+                        onChange = { birthDate = it },
                     )
                 }
                 item {
@@ -324,6 +354,17 @@ private fun ProfileDialog(
                         value = height,
                         onValueChange = { height = it.filter { c -> c.isDigit() || c == '.' } },
                         label = { Text("Altura (cm)") },
+                        singleLine = true,
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = targetWeight,
+                        onValueChange = { targetWeight = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Peso objetivo (kg, opcional)") },
+                        supportingText = {
+                            Text("Con tu tendencia semanal, Inicio estima cuándo llegas.")
+                        },
                         singleLine = true,
                     )
                 }
@@ -340,8 +381,12 @@ private fun ProfileDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(name, sex, parsedDate, height.toDoubleOrNull(), activity) },
-                enabled = !dateError,
+                onClick = {
+                    onSave(
+                        name, sex, birthDate, height.toDoubleOrNull(), activity,
+                        targetWeight.toDoubleOrNull(),
+                    )
+                },
             ) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
@@ -352,12 +397,13 @@ private fun ProfileDialog(
 private fun MeasurementDialog(
     sex: Sex,
     onDismiss: () -> Unit,
-    onSave: (Double, Double?, Double?, Double?) -> Unit,
+    onSave: (Double, Double?, Double?, Double?, LocalDate) -> Unit,
 ) {
     var weight by remember { mutableStateOf("") }
     var neck by remember { mutableStateOf("") }
     var waist by remember { mutableStateOf("") }
     var hip by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(com.pelayo.gimnasio.util.today()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -369,6 +415,13 @@ private fun MeasurementDialog(
                     onValueChange = { weight = it.filter { c -> c.isDigit() || c == '.' } },
                     label = { Text("Peso (kg)") },
                     singleLine = true,
+                )
+                // Por defecto hoy, pero editable: apuntar el pesaje del domingo un
+                // lunes no debe cambiarle la fecha.
+                DatePickerField(
+                    label = "Fecha",
+                    value = date,
+                    onChange = { date = it },
                 )
                 Text(
                     "Medidas opcionales: con cuello y cintura calculo la grasa por el método de la Marina, bastante más fiable que la estimación por IMC.",
@@ -401,7 +454,10 @@ private fun MeasurementDialog(
             TextButton(
                 onClick = {
                     weight.toDoubleOrNull()?.let {
-                        onSave(it, neck.toDoubleOrNull(), waist.toDoubleOrNull(), hip.toDoubleOrNull())
+                        onSave(
+                            it, neck.toDoubleOrNull(), waist.toDoubleOrNull(),
+                            hip.toDoubleOrNull(), date,
+                        )
                     }
                 },
                 enabled = weight.toDoubleOrNull() != null,
@@ -411,4 +467,4 @@ private fun MeasurementDialog(
     )
 }
 
-private fun Double.oneDecimal(): String = ((this * 10).roundToInt() / 10.0).toString()
+

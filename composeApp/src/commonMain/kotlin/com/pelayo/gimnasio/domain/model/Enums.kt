@@ -19,7 +19,33 @@ enum class ExperienceLevel { PRINCIPIANTE, INTERMEDIO, AVANZADO }
  */
 enum class ExerciseComplexity { BASICO, INTERMEDIO, AVANZADO }
 
+/**
+ * Con qué se hace el ejercicio, para poder preferir unas cosas sobre otras al
+ * generar y al sugerir cambios. [priority] ordena de más a menos preferido:
+ * máquina y polea primero por ser las más fáciles de ejecutar y de progresar,
+ * después mancuernas y banco, y al final barra y peso corporal.
+ */
+enum class ExerciseStyle(val priority: Int, val labelEs: String) {
+    MAQUINA(0, "Máquina"),
+    POLEA(0, "Polea"),
+    MANCUERNA(1, "Mancuernas"),
+    BANCO(1, "Banco"),
+    BARRA(2, "Barra"),
+    PESO_CORPORAL(3, "Peso corporal"),
+    OTRO(3, "Otro"),
+}
+
 enum class MealType { DESAYUNO, COMIDA, CENA, SNACK }
+
+/**
+ * Cómo se mide un alimento. Los valores nutricionales son siempre por 100 de esta
+ * unidad, así que el cálculo no cambia: cambia lo que se escribe al lado del número.
+ * Una leche que dice "100 g" cuando la etiqueta habla de 100 ml se lee mal.
+ */
+enum class FoodUnit(val labelEs: String) {
+    G("g"),
+    ML("ml"),
+}
 
 enum class BmiCategory { BAJO_PESO, NORMAL, SOBREPESO, OBESIDAD }
 

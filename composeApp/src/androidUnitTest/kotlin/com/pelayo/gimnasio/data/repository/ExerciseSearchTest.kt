@@ -30,6 +30,31 @@ class ExerciseSearchTest {
             .map { it.name }
 
     @Test
+    fun se_encuentra_por_el_nombre_alternativo_de_wger() = runTest {
+        // wger trae alias por traducción y son lo que la gente teclea de verdad.
+        val db = createTestDatabase()
+        db.catalogQueries.upsertExerciseByWgerId(
+            nameEs = "Press de banca con barra",
+            nameEn = "Barbell Bench Press",
+            descriptionEs = null,
+            categoryId = 11L,
+            videoUrl = null,
+            metValue = 3.5,
+            exerciseType = "REPS",
+            wgerId = 345L,
+            searchName = DatabaseSeeder.searchNameFor(
+                nameEs = "Press de banca con barra",
+                nameEn = "Barbell Bench Press",
+                aliases = listOf("Press banca plano"),
+            ),
+        )
+
+        assertEquals(listOf("Press de banca con barra"), search(db, "press banca plano"))
+        // Y sigue encontrándose por el nombre de siempre.
+        assertEquals(listOf("Press de banca con barra"), search(db, "banca barra"))
+    }
+
+    @Test
     fun dos_palabras_no_tienen_que_ir_seguidas() = runTest {
         val db = db()
         // "press inclinado" no aparece literal en ningún nombre.

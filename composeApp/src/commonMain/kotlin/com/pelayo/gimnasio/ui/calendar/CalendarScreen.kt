@@ -24,6 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,8 +40,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pelayo.gimnasio.util.formatDayMonthEs
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.util.monthNamesEs
@@ -47,16 +52,20 @@ import com.pelayo.gimnasio.util.monthNumber
 import com.pelayo.gimnasio.util.weekdayInitialsEs
 import kotlinx.datetime.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen(
     onSessionClick: (Long) -> Unit,
+    onResumeSession: (Long) -> Unit,
+    onOpenDiary: (LocalDate) -> Unit,
     viewModel: CalendarViewModel = koinViewModel(),
 ) {
     val grid by viewModel.grid.collectAsState()
     val sessions by viewModel.sessions.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
+    val calories by viewModel.calories.collectAsState()
 
     LifecycleResumeEffect(Unit) {
         viewModel.reload()
@@ -70,6 +79,10 @@ fun CalendarScreen(
                 actions = {
                     IconButton(onClick = viewModel::showPreviousMonth) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Mes anterior")
+                    }
+                    // Vuelta a hoy sin deshacer la navegación mes a mes.
+                    IconButton(onClick = viewModel::showToday) {
+                        Icon(Icons.Filled.Today, contentDescription = "Ir a hoy")
                     }
                     IconButton(onClick = viewModel::showNextMonth) {
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Mes siguiente")
@@ -120,10 +133,37 @@ fun CalendarScreen(
                             isToday = date == viewModel.todayDate,
                             isSelected = date != null && date == selectedDate,
                             sessions = date?.let { sessions[it] }.orEmpty(),
+                            hasDiet = date?.let { calories[it] }?.let { it > 0 } == true,
                             onClick = { date?.let(viewModel::selectDate) },
                         )
                     }
                 }
+            }
+
+            item { CalendarLegend() }
+
+            // Lo comido: del día elegido, o del mes entero si no hay ninguno.
+            item {
+                val kcal = selectedDate?.let { calories[it] }
+                val monthTotal = calories.values.sum()
+                val daysWithFood = calories.count { it.value > 0 }
+                DietSummaryCard(
+                    text = when {
+                        selectedDate != null && kcal != null && kcal > 0 ->
+                            "${kcal.roundToInt()} kcal apuntadas ese día. Toca para ver el diario."
+
+                        selectedDate != null -> "Ese día no apuntaste nada de comer."
+
+                        daysWithFood > 0 ->
+                            "$daysWithFood días con comida apuntada este mes, " +
+                                "${(monthTotal / daysWithFood).roundToInt()} kcal de media."
+
+                        else -> "Este mes no has apuntado nada de comer."
+                    },
+                    // La tarjeta que anuncia calorías de un día concreto abre ese
+                    // día en el diario, que ya sabía moverse a cualquier fecha.
+                    onClick = selectedDate?.let { date -> { onOpenDiary(date) } },
+                )
             }
 
             val shown = selectedDate?.let { date -> sessions[date].orEmpty() }
@@ -150,7 +190,18 @@ fun CalendarScreen(
                 }
                 shown.forEach { session ->
                     item(key = "session-${session.sessionId}") {
-                        SessionRow(session = session, onClick = { onSessionClick(session.sessionId) })
+                        SessionRow(
+                            session = session,
+                            onClick = {
+                                // Una sesión sin terminar se retoma; el resumen es
+                                // para las cerradas (y no tiene botón de retomar).
+                                if (session.isCompleted) {
+                                    onSessionClick(session.sessionId)
+                                } else {
+                                    onResumeSession(session.sessionId)
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -164,8 +215,20 @@ private fun DayCell(
     isToday: Boolean,
     isSelected: Boolean,
     sessions: List<CalendarSession>,
+    hasDiet: Boolean,
     onClick: () -> Unit,
 ) {
+    // Los puntos son solo color: el lector de pantalla necesita el resumen en texto.
+    val cellDescription = date?.let {
+        buildString {
+            append(it.formatDayMonthEs())
+            val completed = sessions.count { s -> s.isCompleted }
+            val pending = sessions.size - completed
+            if (completed > 0) append(", $completed entrenamientos")
+            if (pending > 0) append(", $pending sin terminar")
+            if (hasDiet) append(", comida apuntada")
+        }
+    }
     Box(
         Modifier
             .aspectRatio(1f)
@@ -185,7 +248,12 @@ private fun DayCell(
                     Modifier
                 },
             )
-            .clickable(enabled = date != null, onClick = onClick),
+            .clickable(enabled = date != null, onClick = onClick)
+            .then(
+                cellDescription?.let { text ->
+                    Modifier.semantics { contentDescription = text }
+                } ?: Modifier,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (date == null) return@Box
@@ -211,8 +279,66 @@ private fun DayCell(
                             ),
                     )
                 }
+                // El punto de la comida va en otro color para distinguirlo de un
+                // entrenamiento de un vistazo.
+                if (hasDiet) {
+                    Box(
+                        Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.tertiary),
+                    )
+                }
             }
         }
+    }
+}
+
+/** Qué significa cada punto de la rejilla, que eran tres colores sin explicar. */
+@Composable
+private fun CalendarLegend() {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LegendDot(MaterialTheme.colorScheme.primary, "Entreno")
+        LegendDot(MaterialTheme.colorScheme.outline, "Sin terminar")
+        LegendDot(MaterialTheme.colorScheme.tertiary, "Comida")
+    }
+}
+
+@Composable
+private fun LegendDot(color: androidx.compose.ui.graphics.Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DietSummaryCard(text: String, onClick: (() -> Unit)? = null) {
+    val content: @Composable () -> Unit = {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Restaurant,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(text, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+    if (onClick != null) {
+        Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) { content() }
+    } else {
+        Card(Modifier.fillMaxWidth()) { content() }
     }
 }
 

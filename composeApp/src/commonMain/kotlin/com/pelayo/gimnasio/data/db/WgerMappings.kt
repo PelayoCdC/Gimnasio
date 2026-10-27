@@ -1,5 +1,6 @@
 package com.pelayo.gimnasio.data.db
 
+import com.pelayo.gimnasio.domain.calc.ExerciseFormatClassifier
 import com.pelayo.gimnasio.domain.model.MuscleGroups
 
 /**
@@ -54,6 +55,11 @@ object WgerMappings {
         else -> 3.5 // fuerza general intensidad moderada
     }
 
-    /** Los ejercicios de la categoría cardio se registran por tiempo, no por repeticiones. */
-    fun exerciseTypeForCategory(categoryId: Long?): String = if (categoryId == 15L) "TIME" else "REPS"
+    /**
+     * Cómo se registra el ejercicio. El cardio va por tiempo, pero también los
+     * isométricos: wger no los distingue de nada y la plancha llegaba pidiendo
+     * kilos y repeticiones. Lo decide [ExerciseFormatClassifier] por el nombre.
+     */
+    fun exerciseTypeFor(name: String, categoryId: Long?): String =
+        if (ExerciseFormatClassifier.isTimeBased(name, categoryId)) "TIME" else "REPS"
 }

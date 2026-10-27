@@ -56,6 +56,12 @@ object RoutineAdvisor {
         val byId = catalog.associateBy { it.id }
         val categoryOf = MuscleGroups.all.associate { it.id to it.category }
 
+        // Clasificadores memoizados: son barridos de palabras clave y dentro de
+        // los comparadores se consultarían una vez por comparación.
+        val gymCatalog = catalog.filter { it.isGymExercise }
+        val complexityById = gymCatalog.associate { it.id to it.complexity }
+        val styleById = gymCatalog.associate { it.id to it.style }
+
         // Días ordenados por lo poco cargados que están, para repartir lo que se añade.
         val days = routineExercises.groupBy { it.dayId }
         val suggestions = mutableListOf<RoutineSuggestion>()
@@ -76,7 +82,9 @@ object RoutineAdvisor {
                 val candidate = byId[ref.exerciseId] ?: return@firstOrNull false
                 over.group.id in candidate.primaryGroupIds && !candidate.isCompound
             } ?: continue
-            val replacement = pickFor(under.group, catalog, inRoutine + taken) ?: continue
+            val replacement =
+                pickFor(under.group, gymCatalog, inRoutine + taken, complexityById, styleById)
+                    ?: continue
 
             taken += under.group.id
             taken += replacement.id
@@ -98,7 +106,9 @@ object RoutineAdvisor {
         for (score in deficient) {
             if (suggestions.size >= MAX_SUGGESTIONS) break
             if (score.group.id in taken) continue
-            val exercise = pickFor(score.group, catalog, inRoutine + taken) ?: continue
+            val exercise =
+                pickFor(score.group, gymCatalog, inRoutine + taken, complexityById, styleById)
+                    ?: continue
             val day = bestDayFor(score.group, days, byId, categoryOf) ?: continue
 
             taken += score.group.id
@@ -121,16 +131,23 @@ object RoutineAdvisor {
         return suggestions
     }
 
-    /** El mejor candidato para un grupo: compuesto primero y nunca uno que ya esté. */
+    /**
+     * El mejor candidato para un grupo: de gimnasio (el catálogo ya viene
+     * filtrado), compuesto primero, con el material más cómodo a igualdad de lo
+     * demás y nunca uno que ya esté.
+     */
     private fun pickFor(
         group: MuscleGroupInfo,
-        catalog: List<CandidateExercise>,
+        gymCatalog: List<CandidateExercise>,
         excluded: Set<Long>,
-    ): CandidateExercise? = catalog
+        complexityById: Map<Long, com.pelayo.gimnasio.domain.model.ExerciseComplexity>,
+        styleById: Map<Long, com.pelayo.gimnasio.domain.model.ExerciseStyle>,
+    ): CandidateExercise? = gymCatalog
         .filter { group.id in it.primaryGroupIds && it.id !in excluded }
         .minWithOrNull(
             compareByDescending<CandidateExercise> { it.isCompound }
-                .thenBy { it.complexity }
+                .thenBy { complexityById.getValue(it.id) }
+                .thenBy { styleById.getValue(it.id).priority }
                 .thenBy { it.id },
         )
 

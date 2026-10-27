@@ -10,6 +10,7 @@ import com.pelayo.gimnasio.data.remote.HttpClientFactory
 import com.pelayo.gimnasio.data.remote.OpenFoodFactsApi
 import com.pelayo.gimnasio.db.GimnasioDb
 import com.pelayo.gimnasio.domain.model.ActivityLevel
+import com.pelayo.gimnasio.domain.model.FoodUnit
 import com.pelayo.gimnasio.domain.model.MealType
 import com.pelayo.gimnasio.domain.model.RoutineGoal
 import com.pelayo.gimnasio.domain.model.Sex
@@ -31,6 +32,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+
+/** Días de la semana en ISO, que es como los guarda el plan de dieta. */
+private const val LUNES = 1
+private const val MIERCOLES = 3
 
 /** Los tests de backup no tocan la red: la API de alimentos responde vacío. */
 private fun offlineApi(): OpenFoodFactsApi {
@@ -100,8 +105,8 @@ class BackupServiceTest {
             nutrition.addIngredient(recipeId, foodId, grams = 150.0)
 
             val planId = nutrition.createDietPlan("Volumen", 2800.0, 160.0, 350.0, 78.0)
-            nutrition.addFoodToDietPlan(planId, MealType.DESAYUNO, foodId, grams = 120.0)
-            nutrition.addRecipeToDietPlan(planId, MealType.CENA, recipeId, servings = 1.0)
+            nutrition.addFoodToDietPlan(planId, LUNES, MealType.DESAYUNO, foodId, grams = 120.0)
+            nutrition.addRecipeToDietPlan(planId, MIERCOLES, MealType.CENA, recipeId, servings = 1.0)
         }
 
         suspend fun routineNames(): List<String> = routines.routines().first().map { it.name }
@@ -167,14 +172,16 @@ class BackupServiceTest {
         assertEquals(2800.0, plan.targetKcal)
         assertEquals(160.0, plan.targetProteinG)
 
-        // El alimento se reengancha por nombre y la receta por su nombre.
-        val desayuno = plan.mealsFor(MealType.DESAYUNO).single()
+        // El alimento se reengancha por nombre y la receta por su nombre, cada uno
+        // en el día de la semana en el que estaba.
+        val desayuno = plan.mealsFor(LUNES, MealType.DESAYUNO).single()
         assertEquals("Avena", desayuno.name)
         assertEquals(120.0, desayuno.grams)
 
-        val cena = plan.mealsFor(MealType.CENA).single()
+        val cena = plan.mealsFor(MIERCOLES, MealType.CENA).single()
         assertEquals("Tortilla", cena.name)
         assertEquals(1.0, cena.servings)
+        assertTrue(plan.mealsForDay(LUNES).none { it.name == "Tortilla" })
     }
 
     @Test
@@ -189,6 +196,49 @@ class BackupServiceTest {
 
         assertEquals(1, origin.nutrition.dietPlans().size)
         assertNotNull(origin.nutrition.activeDietPlan())
+    }
+
+    @Test
+    fun la_unidad_del_alimento_viaja_en_la_copia() = runTest {
+        val origin = Env()
+        origin.nutrition.createCustomFood(
+            "Leche", null, 63.0, 3.1, 4.7, 3.6, unit = FoodUnit.ML,
+        )
+        val json = origin.backup.exportToJson()
+
+        val restored = Env()
+        restored.backup.importFromJson(json).getOrThrow()
+
+        val leche = restored.nutrition.searchLocal("leche").single()
+        assertEquals(FoodUnit.ML, leche.unit)
+    }
+
+    @Test
+    fun un_plan_de_la_version_2_se_reparte_por_toda_la_semana() = runTest {
+        // Antes el plan era el menú de un día suelto, así que no traía días.
+        val oldFormat = """
+        {
+          "version": 2,
+          "exportedAt": "2026-07-20T10:00:00Z",
+          "customFoods": [
+            {"ref":"Avena","name":"Avena","brand":null,"kcalPer100":380.0,"proteinPer100":13.0,
+             "carbsPer100":60.0,"fatPer100":7.0,"fiberPer100":null,"servingSizeG":null}
+          ],
+          "dietPlans": [
+            {"name":"Volumen","targetKcal":2800.0,"targetProteinG":null,"targetCarbsG":null,
+             "targetFatG":null,"isActive":true,
+             "meals":[{"mealType":"DESAYUNO","customRef":"Avena","grams":120.0}]}
+          ]
+        }
+        """.trimIndent()
+
+        val env = Env()
+        env.backup.importFromJson(oldFormat).getOrThrow()
+
+        val plan = assertNotNull(env.nutrition.activeDietPlan())
+        assertEquals(7, plan.meals.size, "el menú de un día se repite en los siete")
+        assertEquals((1..7).toSet(), plan.plannedDays)
+        assertEquals(120.0, plan.mealsFor(MIERCOLES, MealType.DESAYUNO).single().grams)
     }
 
     @Test
@@ -252,7 +302,9 @@ class BackupServiceTest {
         val origin = Env()
         origin.seedCatalog()
         origin.db.catalogQueries.insertCustomExercise(
-            "Remo invertido", "Bajo la barra", 3.5, "REPS", "remo invertido",
+            nameEs = "Remo invertido", descriptionEs = "Bajo la barra",
+            categoryId = null, videoUrl = null,
+            metValue = 3.5, exerciseType = "REPS", searchName = "remo invertido",
         )
         val customId = origin.db.catalogQueries.lastInsertRowId().executeAsOne()
         origin.db.catalogQueries.insertExerciseMuscle(customId, 12L, "PRIMARY")
@@ -283,6 +335,77 @@ class BackupServiceTest {
     }
 
     @Test
+    fun los_alimentos_de_off_referenciados_viajan_en_la_copia() = runTest {
+        val origin = Env()
+        origin.seedCatalog()
+        // Un producto cacheado de Open Food Facts, apuntado en el diario.
+        origin.db.nutritionQueries.upsertFoodByBarcode(
+            name = "Leche entera", brand = "Central", kcalPer100 = 62.0, proteinPer100 = 3.1,
+            carbsPer100 = 4.7, fatPer100 = 3.5, fiberPer100 = null, servingSizeG = 250.0,
+            imageUrl = null, cachedAt = null, offBarcode = "8480000123456", unit = "ML",
+            searchName = "leche entera central",
+        )
+        val milkId = origin.db.nutritionQueries.selectFoodByBarcode("8480000123456").executeAsOne().id
+        origin.nutrition.logFood(LocalDate(2026, 7, 25), MealType.DESAYUNO, milkId, grams = 250.0)
+
+        // Instalación limpia: sin caché de OFF y sin red.
+        val restored = Env()
+        restored.seedCatalog()
+        val summary = restored.backup.importFromJson(origin.backup.exportToJson()).getOrThrow()
+
+        // La entrada del diario sobrevive porque el alimento viajó en la copia.
+        assertEquals(1, summary.foodLogEntries)
+        assertEquals(0, summary.skippedFoodItems)
+        val milk = assertNotNull(
+            restored.db.nutritionQueries.selectFoodByBarcode("8480000123456").executeAsOneOrNull(),
+            "el alimento de OFF debe restaurarse",
+        )
+        assertEquals("ML", milk.unit)
+    }
+
+    @Test
+    fun las_sesiones_restauradas_siguen_enganchadas_a_su_rutina() = runTest {
+        val origin = Env()
+        origin.populate()
+
+        val restored = Env()
+        restored.seedCatalog()
+        restored.backup.importFromJson(origin.backup.exportToJson()).getOrThrow()
+
+        val session = restored.db.workoutsQueries.selectRecentSessions(1).executeAsOne()
+        assertNotNull(session.routineId, "la sesión debe reengancharse a la rutina por nombre")
+        assertNotNull(session.routineDayId, "y a su día")
+        val day = restored.db.routinesQueries
+            .selectRoutineDayById(session.routineDayId!!).executeAsOne()
+        assertEquals("Día 1 – Torso", day.name)
+        // El nombre del día ya no se cuela en las notas.
+        assertEquals(null, session.notes)
+    }
+
+    @Test
+    fun dos_recetas_con_el_mismo_nombre_no_colapsan_en_una() = runTest {
+        val origin = Env()
+        origin.seedCatalog()
+        val foodId = origin.nutrition.createCustomFood("Huevo", null, 150.0, 12.0, 1.0, 11.0)
+        val first = origin.nutrition.createRecipe("Ensalada", servings = 1, notes = null)
+        origin.nutrition.addIngredient(first, foodId, 100.0)
+        val second = origin.nutrition.createRecipe("Ensalada", servings = 4, notes = null)
+        origin.nutrition.addIngredient(second, foodId, 400.0)
+        origin.nutrition.logRecipe(LocalDate(2026, 7, 25), MealType.CENA, second, servings = 1.0)
+
+        val restored = Env()
+        restored.seedCatalog()
+        restored.backup.importFromJson(origin.backup.exportToJson()).getOrThrow()
+
+        // La entrada del diario debe apuntar a la receta de 4 raciones, no a la
+        // primera que se llame "Ensalada".
+        val entry = restored.db.backupQueries.selectAllFoodLogEntries().executeAsList().single()
+        val recipe = restored.db.nutritionQueries
+            .selectRecipeById(entry.recipeId!!).executeAsOne()
+        assertEquals(4L, recipe.servings)
+    }
+
+    @Test
     fun un_backup_de_version_futura_se_rechaza() = runTest {
         val env = Env()
         val result = env.backup.importFromJson("""{"version":99,"exportedAt":"2026-07-25T00:00:00Z"}""")
@@ -299,7 +422,8 @@ class BackupServiceTest {
 
         assertEquals("fecha;ejercicio;serie;peso_kg;repeticiones;segundos;calentamiento", csv.first())
         assertEquals(3, csv.size, "cabecera + 2 series")
-        assertTrue(csv[1].startsWith("2026-07-21;Press de banca;1;60.0;10;;no"), "fila: ${csv[1]}")
+        // Coma decimal, que es lo que espera Excel en español.
+        assertTrue(csv[1].startsWith("2026-07-21;Press de banca;1;60,0;10;;no"), "fila: ${csv[1]}")
     }
 
     @Test
@@ -310,6 +434,6 @@ class BackupServiceTest {
         val csv = env.backup.exportMeasurementsCsv().trim().lines()
         assertEquals("fecha;peso_kg;cuello_cm;cintura_cm;cadera_cm;grasa_pct;notas", csv.first())
         assertEquals(3, csv.size)
-        assertTrue(csv.any { it.startsWith("2026-07-20;80.5;38.0;85.0") })
+        assertTrue(csv.any { it.startsWith("2026-07-20;80,5;38,0;85,0") })
     }
 }

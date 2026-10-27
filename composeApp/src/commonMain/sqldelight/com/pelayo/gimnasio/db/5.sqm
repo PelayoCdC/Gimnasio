@@ -1,0 +1,3 @@
+-- El perfil gana el peso objetivo: junto con la tendencia semanal de la media
+-- móvil, Inicio puede proyectar cuándo se llega ("a este ritmo, en octubre").
+ALTER TABLE UserProfile ADD COLUMN targetWeightKg REAL;

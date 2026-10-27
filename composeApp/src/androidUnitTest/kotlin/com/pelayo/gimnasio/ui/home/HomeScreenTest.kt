@@ -2,6 +2,7 @@ package com.pelayo.gimnasio.ui.home
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.pelayo.gimnasio.data.createTestDatabase
@@ -143,6 +144,9 @@ class HomeScreenTest {
 
         showScreen()
         compose.onNodeWithText("Descartar").performClick()
+        // Descartar borra la sesión con sus series: ahora pide confirmación.
+        compose.onNodeWithText("¿Descartar el entrenamiento?").assertExists()
+        compose.onAllNodesWithText("Descartar")[1].performClick()
 
         assertTrue(runBlocking { workouts.unfinishedSessions().isEmpty() })
         compose.onNodeWithText("Tienes un entrenamiento sin terminar").assertDoesNotExist()

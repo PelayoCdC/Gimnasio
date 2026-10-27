@@ -1,0 +1,13 @@
+-- El plan de dieta pasa a cubrir la semana entera: cada comida cuelga de un día
+-- (ISO, lunes = 1).
+ALTER TABLE DietPlanMeal ADD COLUMN dayOfWeek INTEGER NOT NULL DEFAULT 1;
+
+-- Los planes de antes eran un menú de un solo día que se aplicaba a diario, así
+-- que se replica en los siete: quien tuviera un plan hecho se lo encuentra igual
+-- toda la semana en vez de solo el lunes.
+INSERT INTO DietPlanMeal(dietPlanId, mealType, foodId, recipeId, grams, servings, dayOfWeek)
+SELECT m.dietPlanId, m.mealType, m.foodId, m.recipeId, m.grams, m.servings, d.day
+FROM DietPlanMeal m,
+     (SELECT 2 AS day UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5
+      UNION ALL SELECT 6 UNION ALL SELECT 7) d
+WHERE m.dayOfWeek = 1;

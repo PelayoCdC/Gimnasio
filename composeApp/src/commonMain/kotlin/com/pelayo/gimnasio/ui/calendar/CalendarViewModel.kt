@@ -2,6 +2,7 @@ package com.pelayo.gimnasio.ui.calendar
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pelayo.gimnasio.data.repository.NutritionRepository
 import com.pelayo.gimnasio.data.repository.WorkoutRepository
 import com.pelayo.gimnasio.domain.model.CalendarSession
 import com.pelayo.gimnasio.util.MonthGrid
@@ -16,6 +17,7 @@ import kotlinx.datetime.LocalDate
 
 class CalendarViewModel(
     private val repository: WorkoutRepository,
+    private val nutritionRepository: NutritionRepository,
 ) : ViewModel() {
 
     private val currentDay = today()
@@ -29,6 +31,10 @@ class CalendarViewModel(
     private val _selectedDate = MutableStateFlow<LocalDate?>(null)
     val selectedDate: StateFlow<LocalDate?> = _selectedDate
 
+    /** Calorías apuntadas cada día del mes: en el calendario también se come. */
+    private val _calories = MutableStateFlow<Map<LocalDate, Double>>(emptyMap())
+    val calories: StateFlow<Map<LocalDate, Double>> = _calories
+
     val todayDate: LocalDate get() = currentDay
 
     init {
@@ -38,6 +44,13 @@ class CalendarViewModel(
     fun showPreviousMonth() = shiftMonth(-1)
 
     fun showNextMonth() = shiftMonth(1)
+
+    /** Vuelve al mes actual con hoy seleccionado, tras navegar meses con las flechas. */
+    fun showToday() {
+        _grid.value = buildMonthGrid(currentDay.year, currentDay.monthNumber)
+        _selectedDate.value = currentDay
+        loadMonth()
+    }
 
     private fun shiftMonth(delta: Int) {
         val current = _grid.value
@@ -58,6 +71,7 @@ class CalendarViewModel(
         viewModelScope.launch {
             val (from, to) = monthRange(grid.year, grid.month)
             _sessions.value = repository.sessionsByDate(from, to)
+            _calories.value = nutritionRepository.dailyCalories(from, to)
         }
     }
 }

@@ -27,6 +27,7 @@ CREATE TABLE SetLog (
 CREATE INDEX idx_session_date ON WorkoutSession(date);
 CREATE INDEX idx_setlog_session ON SetLog(sessionId);
 CREATE INDEX idx_setlog_exercise ON SetLog(exerciseId);
+CREATE INDEX idx_session_completed ON WorkoutSession(isCompleted, date);
 
 insertSession:
 INSERT INTO WorkoutSession(routineId, routineDayId, date, startTime, durationMinutes, kcalBurned, notes, isCompleted)
@@ -79,12 +80,20 @@ UPDATE SetLog SET weightKg = ?, reps = ?, timeSeconds = ?, isWarmup = ?, rpe = ?
 deleteSetLog:
 DELETE FROM SetLog WHERE id = ?;
 
+selectSetLogById:
+SELECT * FROM SetLog WHERE id = ?;
+
+-- Los ejercicios salen en el orden en que se entrenaron (la primera serie
+-- registrada de cada uno marca su posición), no por id de ejercicio.
 selectSetsForSession:
 SELECT s.*, e.nameEs, e.exerciseType
 FROM SetLog s
 JOIN Exercise e ON e.id = s.exerciseId
 WHERE s.sessionId = ?
-ORDER BY s.exerciseId, s.setNumber;
+ORDER BY (
+    SELECT MIN(s2.id) FROM SetLog s2
+    WHERE s2.sessionId = s.sessionId AND s2.exerciseId = s.exerciseId
+), s.setNumber;
 
 -- Historial de un ejercicio: sets con la fecha de su sesión (para gráficas).
 selectSetsForExercise:
@@ -103,15 +112,22 @@ JOIN WorkoutSession w ON w.id = s.sessionId
 WHERE s.exerciseId = :exerciseId AND w.isCompleted = 1 AND s.isWarmup = 0
 ORDER BY w.date DESC, w.id DESC, s.setNumber;
 
--- Últimos sets registrados de un ejercicio (sesión completada más reciente que lo contenga).
-selectLastSetsForExercise:
-SELECT s.*
+-- Series efectivas de la sesión completada más reciente (por fecha, no por id:
+-- una sesión corregida con fecha pasada no debe pisar a la última de verdad)
+-- que contenga el ejercicio, excluyendo la sesión en curso. Trae la fecha en la
+-- misma consulta para que los números y el "de cuándo son" salgan siempre de la
+-- misma sesión.
+selectPreviousSetsForExercise:
+SELECT s.*, w.date
 FROM SetLog s
 JOIN WorkoutSession w ON w.id = s.sessionId
-WHERE s.exerciseId = :exerciseId AND w.isCompleted = 1
+WHERE s.exerciseId = :exerciseId AND w.isCompleted = 1 AND s.isWarmup = 0
   AND w.id = (
-    SELECT MAX(w2.id) FROM WorkoutSession w2
+    SELECT w2.id
+    FROM WorkoutSession w2
     JOIN SetLog s2 ON s2.sessionId = w2.id
-    WHERE s2.exerciseId = :exerciseId AND w2.isCompleted = 1
+    WHERE s2.exerciseId = :exerciseId AND w2.isCompleted = 1 AND w2.id != :excludeSessionId
+    ORDER BY w2.date DESC, w2.id DESC
+    LIMIT 1
   )
 ORDER BY s.setNumber;

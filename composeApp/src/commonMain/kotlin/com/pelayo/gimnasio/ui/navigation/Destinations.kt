@@ -38,7 +38,10 @@ import org.jetbrains.compose.resources.StringResource
 
 @Serializable object SettingsRoute
 
+/** Sin fecha abre en hoy; con ella (ISO), en ese día (p. ej. desde el calendario). */
+@Serializable data class FoodDiaryRoute(val dateIso: String? = null)
 @Serializable object DietPlanRoute
+@Serializable object FoodCatalogRoute
 @Serializable object RecipeListRoute
 @Serializable data class RecipeEditRoute(val recipeId: Long)
 

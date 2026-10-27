@@ -17,18 +17,24 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.HourglassBottom
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -47,8 +53,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.pelayo.gimnasio.domain.model.FoodItem
+import com.pelayo.gimnasio.domain.model.FoodUnit
 import com.pelayo.gimnasio.domain.model.MealType
+import com.pelayo.gimnasio.domain.model.RecipeItem
 import com.pelayo.gimnasio.domain.model.labelEs
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.pelayo.gimnasio.util.oneDecimal
 import kotlinx.datetime.LocalDate
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.math.roundToInt
@@ -63,10 +74,22 @@ fun FoodSearchScreen(
 ) {
     val query by viewModel.query.collectAsState()
     val results by viewModel.results.collectAsState()
+    val recipes by viewModel.recipes.collectAsState()
     val onlineState by viewModel.onlineState.collectAsState()
     val scanState by viewModel.scanState.collectAsState()
+    val rateLimitLeft by viewModel.rateLimitSecondsLeft.collectAsState()
     var selectedFood by remember { mutableStateOf<FoodItem?>(null) }
+    var selectedRecipe by remember { mutableStateOf<RecipeItem?>(null) }
+    var showRecipes by remember { mutableStateOf(false) }
     var showCustomDialog by remember { mutableStateOf(false) }
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // La pantalla se queda abierta tras apuntar: una comida suelen ser varios
+    // alimentos y cada uno costaba volver a entrar desde el diario.
+    fun confirmLogged(name: String) {
+        scope.launch { snackbarHost.showSnackbar("$name apuntado") }
+    }
 
     // Un escaneo con éxito lleva directo al diálogo de cantidad.
     LaunchedEffect(scanState) {
@@ -97,56 +120,49 @@ fun FoodSearchScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = viewModel::onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Buscar alimento…") },
-                singleLine = true,
-            )
-
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(
-                    onClick = viewModel::searchOnline,
-                    enabled = query.trim().length >= 2 && onlineState !is OnlineSearchState.Loading,
-                ) {
-                    if (onlineState is OnlineSearchState.Loading) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text("Buscar online")
-                }
-                OutlinedButton(onClick = { showCustomDialog = true }) { Text("Crear alimento") }
+                FilterChip(
+                    selected = !showRecipes,
+                    onClick = { showRecipes = false },
+                    label = { Text("Alimentos") },
+                )
+                FilterChip(
+                    selected = showRecipes,
+                    onClick = { showRecipes = true },
+                    label = { Text("Mis recetas") },
+                )
             }
 
-            when (val state = onlineState) {
-                is OnlineSearchState.Failed -> Text(
-                    state.message,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            if (showRecipes) {
+                RecipePicker(
+                    recipes = recipes,
+                    onSelect = { selectedRecipe = it },
                 )
-                is OnlineSearchState.Done -> Text(
-                    if (state.count == 0) {
-                        "Open Food Facts no encontró nada con ese nombre."
-                    } else {
-                        "${state.count} productos descargados de Open Food Facts."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-                else -> Unit
+                return@Column
             }
+
+            FoodSearchControls(
+                query = query,
+                onQueryChange = viewModel::onQueryChange,
+                placeholder = "Buscar alimento…",
+                onlineState = onlineState,
+                rateLimitLeft = rateLimitLeft,
+                onSearchOnline = viewModel::searchOnline,
+                onCreateFood = { showCustomDialog = true },
+                onlineDoneMessage = { "$it productos descargados de Open Food Facts." },
+            )
 
             if (results.isEmpty()) {
+                // Distinguir "no tienes nada guardado" de "esa búsqueda no casa":
+                // con el catálogo lleno, el primer mensaje era mentira.
+                val counts by viewModel.counts.collectAsState()
+                val catalogEmpty = counts.total == 0
                 Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -159,9 +175,16 @@ fun FoodSearchScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Sin alimentos guardados", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Búscalos online o crea el tuyo con los datos de la etiqueta.",
+                        if (catalogEmpty) "Sin alimentos guardados" else "Nada con ese nombre",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        if (catalogEmpty) {
+                            "Búscalos online o crea el tuyo con los datos de la etiqueta."
+                        } else {
+                            "Prueba con otro nombre, búscalo online o créalo a mano."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -187,7 +210,20 @@ fun FoodSearchScreen(
             onConfirm = { grams ->
                 viewModel.logFood(date, mealType, food.id, grams) {
                     selectedFood = null
-                    onDone()
+                    confirmLogged(food.name)
+                }
+            },
+        )
+    }
+
+    selectedRecipe?.let { recipe ->
+        ServingsDialog(
+            recipe = recipe,
+            onDismiss = { selectedRecipe = null },
+            onConfirm = { servings ->
+                viewModel.logRecipe(date, mealType, recipe.id, servings) {
+                    selectedRecipe = null
+                    confirmLogged(recipe.name)
                 }
             },
         )
@@ -225,8 +261,8 @@ fun FoodSearchScreen(
     if (showCustomDialog) {
         CustomFoodDialog(
             onDismiss = { showCustomDialog = false },
-            onCreate = { name, brand, kcal, protein, carbs, fat ->
-                viewModel.createCustomFood(name, brand, kcal, protein, carbs, fat) {
+            onCreate = { name, brand, kcal, protein, carbs, fat, unit ->
+                viewModel.createCustomFood(name, brand, kcal, protein, carbs, fat, unit) {
                     showCustomDialog = false
                 }
             },
@@ -234,8 +270,130 @@ fun FoodSearchScreen(
     }
 }
 
+/**
+ * Aviso de que Open Food Facts ha cortado. Sale con cuenta atrás porque el corte
+ * es por IP y por tiempo: insistir no lo arregla, solo lo alarga.
+ */
 @Composable
-private fun FoodRow(food: FoodItem, onClick: () -> Unit) {
+internal fun RateLimitWarning(secondsLeft: Int) {
+    Card(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.HourglassBottom, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    "Open Food Facts te ha cortado por ahora",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "Limita las búsquedas de los usuarios anónimos. Vuelve a intentarlo en " +
+                        "${secondsLeft}s; seguir probando solo alarga la espera. Puedes crear " +
+                        "el alimento a mano mientras tanto.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+/** Las recetas propias se apuntan por raciones, con los macros ya calculados. */
+@Composable
+private fun RecipePicker(recipes: List<RecipeItem>, onSelect: (RecipeItem) -> Unit) {
+    if (recipes.isEmpty()) {
+        Column(
+            Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                Icons.Filled.MenuBook,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text("Aún no tienes recetas", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Créalas desde Nutrición → Mis recetas y podrás apuntarlas aquí por raciones.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(recipes.size) { index ->
+            val recipe = recipes[index]
+            Card(onClick = { onSelect(recipe) }, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(recipe.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "${recipe.macrosPerServing.kcal.roundToInt()} kcal/ración · " +
+                            "rinde ${recipe.servings}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServingsDialog(
+    recipe: RecipeItem,
+    onDismiss: () -> Unit,
+    onConfirm: (Double) -> Unit,
+) {
+    var servings by remember { mutableStateOf("1") }
+    val parsed = servings.toDoubleOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(recipe.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = servings,
+                    onValueChange = { servings = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Raciones") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                )
+                if (parsed != null) {
+                    val macros = recipe.macrosPerServing
+                    Text(
+                        "${(macros.kcal * parsed).roundToInt()} kcal · " +
+                            "P ${(macros.protein * parsed).roundToInt()} g · " +
+                            "C ${(macros.carbs * parsed).roundToInt()} g · " +
+                            "G ${(macros.fat * parsed).roundToInt()} g",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { parsed?.let(onConfirm) },
+                enabled = parsed != null && parsed > 0,
+            ) { Text("Añadir") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+@Composable
+internal fun FoodRow(food: FoodItem, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (food.imageUrl != null) {
@@ -256,7 +414,7 @@ private fun FoodRow(food: FoodItem, onClick: () -> Unit) {
                 Text(
                     buildString {
                         food.brand?.let { append("$it · ") }
-                        append("${food.kcalPer100.roundToInt()} kcal/100 g")
+                        append("${food.kcalPer100.roundToInt()} kcal/100 ${food.unit.labelEs}")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -273,7 +431,7 @@ private fun QuantityDialog(
     onConfirm: (Double) -> Unit,
 ) {
     var grams by remember {
-        mutableStateOf((food.servingSizeG ?: 100.0).roundToInt().toString())
+        mutableStateOf((food.servingSize ?: 100.0).roundToInt().toString())
     }
     val parsed = grams.toDoubleOrNull()
 
@@ -285,7 +443,7 @@ private fun QuantityDialog(
                 OutlinedTextField(
                     value = grams,
                     onValueChange = { grams = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Cantidad (g)") },
+                    label = { Text("Cantidad (${food.unit.labelEs})") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                 )
@@ -312,30 +470,47 @@ private fun QuantityDialog(
 }
 
 @Composable
-private fun CustomFoodDialog(
+internal fun CustomFoodDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, String?, Double, Double, Double, Double) -> Unit,
+    onCreate: (String, String?, Double, Double, Double, Double, FoodUnit) -> Unit,
+    /** Alimento a editar: prerrellena y cambia el título. Null para crear. */
+    initial: FoodItem? = null,
 ) {
-    var name by remember { mutableStateOf("") }
-    var brand by remember { mutableStateOf("") }
-    var kcal by remember { mutableStateOf("") }
-    var protein by remember { mutableStateOf("") }
-    var carbs by remember { mutableStateOf("") }
-    var fat by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var brand by remember { mutableStateOf(initial?.brand.orEmpty()) }
+    var kcal by remember { mutableStateOf(initial?.kcalPer100?.oneDecimal().orEmpty()) }
+    var protein by remember { mutableStateOf(initial?.proteinPer100?.oneDecimal().orEmpty()) }
+    var carbs by remember { mutableStateOf(initial?.carbsPer100?.oneDecimal().orEmpty()) }
+    var fat by remember { mutableStateOf(initial?.fatPer100?.oneDecimal().orEmpty()) }
+    var unit by remember { mutableStateOf(initial?.unit ?: FoodUnit.G) }
 
     val valid = name.isNotBlank() && kcal.toDoubleOrNull() != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nuevo alimento") },
+        title = { Text(if (initial == null) "Nuevo alimento" else "Editar alimento") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     Text(
-                        "Valores por cada 100 g, como vienen en la etiqueta.",
+                        "Valores por cada 100 ${unit.labelEs}, como vienen en la etiqueta.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                item {
+                    // Los líquidos vienen por 100 ml en la etiqueta, no por 100 g.
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FoodUnit.entries.forEach { option ->
+                            FilterChip(
+                                selected = unit == option,
+                                onClick = { unit = option },
+                                label = {
+                                    Text(if (option == FoodUnit.G) "Sólido (g)" else "Líquido (ml)")
+                                },
+                            )
+                        }
+                    }
                 }
                 item {
                     OutlinedTextField(
@@ -357,7 +532,7 @@ private fun CustomFoodDialog(
                     OutlinedTextField(
                         value = kcal,
                         onValueChange = { kcal = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text("kcal / 100 g") },
+                        label = { Text("kcal / 100 ${unit.labelEs}") },
                         singleLine = true,
                     )
                 }
@@ -397,6 +572,7 @@ private fun CustomFoodDialog(
                         protein.toDoubleOrNull() ?: 0.0,
                         carbs.toDoubleOrNull() ?: 0.0,
                         fat.toDoubleOrNull() ?: 0.0,
+                        unit,
                     )
                 },
                 enabled = valid,

@@ -126,21 +126,36 @@ class OpenFoodFactsApiTest {
     }
 
     @Test
-    fun un_503_se_convierte_en_un_mensaje_entendible() = runTest {
+    fun un_503_es_el_corte_por_limite_de_peticiones() = runTest {
+        // OFF no se cae: corta a los anónimos con un 503 y una página de aviso.
         val (api, _) = apiRespondingWith(HttpStatusCode.ServiceUnavailable)
 
         val error = assertFailsWith<OpenFoodFactsException> { api.search("avena") }
 
-        assertTrue(error.message!!.contains("no responde"), "mensaje: ${error.message}")
-        assertTrue(error.message!!.contains("503"))
-        assertTrue(error.message!!.contains("crea el alimento a mano"))
+        assertTrue(error.isRateLimited, "debe poder bloquear el botón")
+        assertEquals(60, error.retryAfterSeconds)
+        assertTrue(error.message!!.contains("cortado"), "mensaje: ${error.message}")
+        assertTrue(error.message!!.contains("crear el alimento a mano"))
     }
 
     @Test
     fun demasiadas_peticiones_avisa_de_esperar() = runTest {
         val (api, _) = apiRespondingWith(HttpStatusCode.TooManyRequests)
+
         val error = assertFailsWith<OpenFoodFactsException> { api.search("avena") }
-        assertTrue(error.message!!.contains("Espera"), "mensaje: ${error.message}")
+
+        assertTrue(error.isRateLimited)
+        assertTrue(error.message!!.contains("espera"), "mensaje: ${error.message}")
+    }
+
+    @Test
+    fun una_caida_de_verdad_no_bloquea_el_boton() = runTest {
+        val (api, _) = apiRespondingWith(HttpStatusCode.BadGateway)
+
+        val error = assertFailsWith<OpenFoodFactsException> { api.search("avena") }
+
+        assertTrue(!error.isRateLimited)
+        assertTrue(error.message!!.contains("502"), "mensaje: ${error.message}")
     }
 
     @Test

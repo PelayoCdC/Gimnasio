@@ -10,6 +10,8 @@ data class UserProfileData(
     val activityLevel: ActivityLevel,
     val goal: String?,
     val targetKcalOverride: Double?,
+    /** Peso al que se quiere llegar; alimenta la proyección de Inicio. */
+    val targetWeightKg: Double? = null,
 )
 
 data class BodyMeasurementEntry(
@@ -30,15 +32,17 @@ enum class BodyFatMethod(val labelEs: String) {
 }
 
 data class BodyMetrics(
-    val ageYears: Int,
+    /** Nulos si el perfil no tiene fecha de nacimiento: el IMC y el método
+     * Marina no la necesitan, así que el panel funciona igual sin ella. */
+    val ageYears: Int?,
     val weightKg: Double,
     val heightCm: Double,
     val bmi: Double,
     val bmiCategory: BmiCategory,
     val bodyFatPercent: Double?,
     val bodyFatMethod: BodyFatMethod?,
-    val bmr: Double,
-    val tdee: Double,
+    val bmr: Double?,
+    val tdee: Double?,
 ) {
     /** Masa magra estimada; null si no hay estimación de grasa. */
     val leanMassKg: Double? get() = bodyFatPercent?.let { weightKg * (1 - it / 100.0) }

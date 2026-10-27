@@ -14,13 +14,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -37,9 +46,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -47,6 +58,7 @@ import androidx.compose.foundation.layout.FlowRow
 import com.pelayo.gimnasio.domain.model.SetLogItem
 import com.pelayo.gimnasio.domain.model.formatKg
 import com.pelayo.gimnasio.ui.components.MuscleMap
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -58,18 +70,40 @@ fun WorkoutSummaryScreen(
     viewModel: WorkoutSummaryViewModel = koinViewModel { parametersOf(sessionId) },
 ) {
     val summary by viewModel.summary.collectAsState()
+    val records by viewModel.records.collectAsState()
     val deleted by viewModel.deleted.collectAsState()
     var setToEdit by remember { mutableStateOf<SetLogItem?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(deleted) {
         if (deleted) onDone()
+    }
+
+    // Snackbar con deshacer en vez de diálogo: para una serie suelta confirmar
+    // molesta más de lo que protege.
+    fun deleteSetWithUndo(set: SetLogItem) {
+        viewModel.deleteSet(set.id)
+        scope.launch {
+            val result = snackbarHost.showSnackbar(
+                message = "Serie ${set.setNumber} borrada",
+                actionLabel = "Deshacer",
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.restoreSet(set)
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Entrenamiento") },
+                navigationIcon = {
+                    IconButton(onClick = onDone) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { confirmDelete = true }) {
                         Icon(Icons.Filled.Delete, contentDescription = "Borrar entrenamiento")
@@ -77,6 +111,7 @@ fun WorkoutSummaryScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         val current = summary
         if (current == null) {
@@ -112,6 +147,41 @@ fun WorkoutSummaryScreen(
                         current.kcalBurned?.let { kcal ->
                             Spacer(Modifier.height(12.dp))
                             StatColumn("Gasto estimado", "${kcal.toInt()} kcal")
+                        }
+                    }
+                }
+            }
+
+            // El resumen es el momento de premio: los récords, arriba y a color.
+            if (records.isNotEmpty()) {
+                item {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        ),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.EmojiEvents,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (records.size == 1) "¡Récord personal!" else "¡Récords personales!",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
+                            records.forEach { record ->
+                                Text(
+                                    "${record.exerciseName}: ${record.description}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
                         }
                     }
                 }
@@ -183,13 +253,13 @@ fun WorkoutSummaryScreen(
         EditSetDialog(
             set = set,
             onDismiss = { setToEdit = null },
-            onSave = { weight, reps, time ->
-                viewModel.updateSet(set.id, weight, reps, time)
+            onSave = { weight, reps, time, rpe ->
+                viewModel.updateSet(set.id, weight, reps, time, rpe)
                 setToEdit = null
             },
             onDelete = {
-                viewModel.deleteSet(set.id)
                 setToEdit = null
+                deleteSetWithUndo(set)
             },
         )
     }
@@ -219,7 +289,7 @@ fun WorkoutSummaryScreen(
 
 /**
  * Notas del día. Se guardan al perder el foco o al pulsar el botón, para no
- * escribir en la base de datos en cada tecla.
+ * escribir en la base de datos en cada tecla ni perderlas al salir con "atrás".
  */
 @Composable
 private fun NotesCard(notes: String?, onSave: (String) -> Unit) {
@@ -237,7 +307,11 @@ private fun NotesCard(notes: String?, onSave: (String) -> Unit) {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { state ->
+                        if (!state.isFocused && text != notes.orEmpty()) onSave(text)
+                    },
                 placeholder = { Text("Sin notas") },
                 minLines = 2,
             )
@@ -252,19 +326,23 @@ private fun NotesCard(notes: String?, onSave: (String) -> Unit) {
 private fun EditSetDialog(
     set: SetLogItem,
     onDismiss: () -> Unit,
-    onSave: (Double?, Int?, Int?) -> Unit,
+    onSave: (weight: Double?, reps: Int?, time: Int?, rpe: Double?) -> Unit,
     onDelete: () -> Unit,
 ) {
     val isTimed = set.timeSeconds != null
     var weight by remember { mutableStateOf(set.weightKg?.formatKg() ?: "") }
     var reps by remember { mutableStateOf(set.reps?.toString() ?: "") }
     var time by remember { mutableStateOf(set.timeSeconds?.toString() ?: "") }
+    var rpe by remember { mutableStateOf(set.rpe?.formatKg() ?: "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Serie ${set.setNumber}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (isTimed) {
                     OutlinedTextField(
                         value = time,
@@ -285,6 +363,13 @@ private fun EditSetDialog(
                         label = { Text("Repeticiones") },
                         singleLine = true,
                     )
+                    OutlinedTextField(
+                        value = rpe,
+                        onValueChange = { rpe = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("RPE (opcional, 6-10)") },
+                        supportingText = { Text("Esfuerzo percibido: 10 es no poder hacer una más.") },
+                        singleLine = true,
+                    )
                 }
                 TextButton(onClick = onDelete) { Text("Borrar esta serie") }
             }
@@ -292,9 +377,14 @@ private fun EditSetDialog(
         confirmButton = {
             TextButton(onClick = {
                 if (isTimed) {
-                    onSave(null, null, time.toIntOrNull())
+                    onSave(null, null, time.toIntOrNull(), null)
                 } else {
-                    onSave(weight.toDoubleOrNull(), reps.toIntOrNull(), null)
+                    onSave(
+                        weight.toDoubleOrNull(),
+                        reps.toIntOrNull(),
+                        null,
+                        rpe.toDoubleOrNull()?.coerceIn(1.0, 10.0),
+                    )
                 }
             }) { Text("Guardar") }
         },

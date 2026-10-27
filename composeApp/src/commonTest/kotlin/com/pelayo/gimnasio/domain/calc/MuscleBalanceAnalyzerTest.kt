@@ -80,4 +80,41 @@ class MuscleBalanceAnalyzerTest {
         assertTrue(report.scores.all { it.level == CoverageLevel.AUSENTE })
         assertFalse(report.isBalanced)
     }
+
+    @Test
+    fun los_umbrales_dependen_del_nivel() {
+        // 5 sets: bajo con el umbral genérico (6), suficiente para principiante (4).
+        val entries = MuscleGroups.all.map { primary(5, it.id) }
+
+        val generic = MuscleBalanceAnalyzer.analyze(entries)
+        assertTrue(generic.scores.all { it.level == CoverageLevel.BAJO })
+
+        val beginner = MuscleBalanceAnalyzer.analyze(
+            entries,
+            com.pelayo.gimnasio.domain.model.ExperienceLevel.PRINCIPIANTE,
+        )
+        assertTrue(beginner.scores.all { it.level == CoverageLevel.OK })
+
+        // Y a un avanzado 6 sets le quedan cortos (umbral 8).
+        val six = MuscleGroups.all.map { primary(6, it.id) }
+        val advanced = MuscleBalanceAnalyzer.analyze(
+            six,
+            com.pelayo.gimnasio.domain.model.ExperienceLevel.AVANZADO,
+        )
+        assertTrue(advanced.scores.all { it.level == CoverageLevel.BAJO })
+    }
+
+    @Test
+    fun avisa_del_tren_superior_infraentrenado() {
+        // Mucha pierna y muy poco torso: la rama del aviso inverso no tenía test.
+        val entries = listOf(
+            primary(20, MuscleGroups.CUADRICEPS.id),
+            primary(20, MuscleGroups.ISQUIOS.id),
+            primary(20, MuscleGroups.GLUTEOS.id),
+            primary(2, MuscleGroups.PECHO.id),
+            primary(2, MuscleGroups.ESPALDA.id),
+        )
+        val report = MuscleBalanceAnalyzer.analyze(entries)
+        assertTrue(report.warnings.any { it.message.contains("Tren superior infraentrenado") })
+    }
 }

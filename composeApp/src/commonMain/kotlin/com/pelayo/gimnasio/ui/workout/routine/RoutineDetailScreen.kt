@@ -1,9 +1,12 @@
 package com.pelayo.gimnasio.ui.workout.routine
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,13 +25,14 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FitnessCenter
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import com.pelayo.gimnasio.ui.components.TagChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,6 +53,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,18 +62,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil3.compose.AsyncImage
+import com.pelayo.gimnasio.domain.calc.RoutineGenerator
 import com.pelayo.gimnasio.domain.calc.RoutineSuggestion
 import com.pelayo.gimnasio.domain.calc.SuggestionKind
 import com.pelayo.gimnasio.domain.model.RoutineDayInfo
+import com.pelayo.gimnasio.domain.model.RoutineDetail
 import com.pelayo.gimnasio.domain.model.RoutineExerciseItem
+import com.pelayo.gimnasio.domain.model.RoutineGoal
 import com.pelayo.gimnasio.domain.model.RoutineSummary
 import com.pelayo.gimnasio.domain.model.labelEs
 import com.pelayo.gimnasio.domain.model.weekdayNamesEs
 import com.pelayo.gimnasio.ui.components.BalancePanel
+import com.pelayo.gimnasio.ui.components.ConfirmDeleteDialog
 import com.pelayo.gimnasio.ui.components.MuscleMap
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
@@ -86,11 +100,17 @@ fun RoutineDetailScreen(
     val routine by viewModel.routine.collectAsState()
     val balance by viewModel.balance.collectAsState()
     val suggestions by viewModel.suggestions.collectAsState()
+    val alternatives by viewModel.alternatives.collectAsState()
+    val alternativesLoading by viewModel.alternativesLoading.collectAsState()
     val otherRoutines by viewModel.otherRoutines.collectAsState()
     var showAddDayDialog by remember { mutableStateOf(false) }
+    var showEditRoutine by remember { mutableStateOf(false) }
     var exerciseToEdit by remember { mutableStateOf<RoutineExerciseItem?>(null) }
+    var exerciseToSwap by remember { mutableStateOf<RoutineExerciseItem?>(null) }
     var dayToEdit by remember { mutableStateOf<RoutineDayInfo?>(null) }
     var dayToCopy by remember { mutableStateOf<RoutineDayInfo?>(null) }
+    var dayToDelete by remember { mutableStateOf<RoutineDayInfo?>(null) }
+    var exerciseToRemove by remember { mutableStateOf<RoutineExerciseItem?>(null) }
     val snackbarHost = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -107,6 +127,22 @@ fun RoutineDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showEditRoutine = true }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Editar rutina")
+                    }
+                    IconButton(
+                        onClick = {
+                            viewModel.exportRoutine { message ->
+                                if (message.isNotEmpty()) {
+                                    scope.launch { snackbarHost.showSnackbar(message) }
+                                }
+                            }
+                        },
+                    ) {
+                        Icon(Icons.Filled.FileDownload, contentDescription = "Exportar rutina")
                     }
                 },
             )
@@ -128,20 +164,10 @@ fun RoutineDetailScreen(
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AssistChip(onClick = {}, label = { Text(current.goal.labelEs) })
+                    TagChip(label = current.goal.labelEs)
                     Spacer(Modifier.width(8.dp))
                     if (current.isActive) {
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("Activa") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.CheckCircle,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            },
-                        )
+                        TagChip(label = "Activa", icon = Icons.Filled.CheckCircle)
                     } else {
                         TextButton(onClick = viewModel::setActive) { Text("Marcar como activa") }
                     }
@@ -186,11 +212,15 @@ fun RoutineDetailScreen(
                         onAddExercise = { onAddExercise(day.id) },
                         onCopyDay = { dayToCopy = day },
                         onEditDay = { dayToEdit = day },
-                        onDeleteDay = { viewModel.deleteDay(day.id) },
+                        onDeleteDay = { dayToDelete = day },
                         onEditExercise = { exerciseToEdit = it },
                         onOpenExercise = { onOpenExercise(it.exerciseId) },
-                        onRemoveExercise = { viewModel.removeExercise(it.id) },
-                        onMoveExercise = { item, delta -> viewModel.moveExercise(item.id, delta) },
+                        onRemoveExercise = { exerciseToRemove = it },
+                        onSwapExercise = {
+                            exerciseToSwap = it
+                            viewModel.loadAlternatives(it)
+                        },
+                        onReorder = { ids -> viewModel.reorderExercises(day.id, ids) },
                         onStartWorkout = { viewModel.startWorkout(day.id, onStartWorkout) },
                     )
                 }
@@ -237,6 +267,36 @@ fun RoutineDetailScreen(
         )
     }
 
+    dayToDelete?.let { day ->
+        ConfirmDeleteDialog(
+            title = "¿Borrar \"${day.name}\"?",
+            text = if (day.exercises.isEmpty()) {
+                "El día está vacío y se puede borrar sin perder nada."
+            } else {
+                "Se borrará el día con sus ${day.exercises.size} ejercicios y sus series objetivo. " +
+                    "El historial de entrenamientos no se toca."
+            },
+            onDismiss = { dayToDelete = null },
+            onConfirm = {
+                viewModel.deleteDay(day.id)
+                dayToDelete = null
+            },
+        )
+    }
+
+    exerciseToRemove?.let { exercise ->
+        ConfirmDeleteDialog(
+            title = "¿Quitar ${exercise.exerciseName}?",
+            text = "Se quita de este día con sus series objetivo. El historial no se toca.",
+            confirmLabel = "Quitar",
+            onDismiss = { exerciseToRemove = null },
+            onConfirm = {
+                viewModel.removeExercise(exercise.id)
+                exerciseToRemove = null
+            },
+        )
+    }
+
     dayToCopy?.let { day ->
         CopyDayDialog(
             day = day,
@@ -270,6 +330,182 @@ fun RoutineDetailScreen(
             },
         )
     }
+
+    if (showEditRoutine) {
+        routine?.let { current ->
+            EditRoutineDialog(
+                routine = current,
+                onDismiss = { showEditRoutine = false },
+                onSave = { name, goal, sets ->
+                    viewModel.renameRoutine(name, goal, sets)
+                    showEditRoutine = false
+                },
+            )
+        }
+    }
+
+    exerciseToSwap?.let { exercise ->
+        SwapExerciseDialog(
+            exercise = exercise,
+            alternatives = alternatives,
+            loading = alternativesLoading,
+            onDismiss = {
+                exerciseToSwap = null
+                viewModel.clearAlternatives()
+            },
+            onPick = { alternative ->
+                viewModel.replaceExercise(exercise.id, alternative.exerciseId)
+                exerciseToSwap = null
+            },
+        )
+    }
+}
+
+/**
+ * Cambia el nombre y el objetivo de la rutina. El objetivo no rehace lo que ya
+ * está: solo manda en lo que se añada a partir de ahora, y por eso se dice.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditRoutineDialog(
+    routine: RoutineDetail,
+    onDismiss: () -> Unit,
+    onSave: (String, RoutineGoal, Int?) -> Unit,
+) {
+    var name by remember(routine.id) { mutableStateOf(routine.name) }
+    var goal by remember(routine.id) { mutableStateOf(routine.goal) }
+
+    // Las series que tiene ahora la rutina: la cifra que más se repite. Si hay
+    // ejercicios con distintas series, se parte de null y no se toca nada salvo
+    // que el usuario elija una.
+    val currentSets = remember(routine) {
+        routine.days.flatMap { day -> day.exercises.map { it.targetSets } }
+            .groupingBy { it }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+    }
+    var sets by remember(routine.id) { mutableStateOf(currentSets) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Editar rutina") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                )
+                Text("Objetivo", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RoutineGoal.entries.forEach { option ->
+                        FilterChip(
+                            selected = goal == option,
+                            onClick = { goal = option },
+                            label = { Text(option.labelEs) },
+                        )
+                    }
+                }
+                if (goal != routine.goal) {
+                    Text(
+                        "Las repeticiones que ya tienes se quedan como están; el objetivo " +
+                            "nuevo se aplica a lo que añadas.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Text("Series por ejercicio", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RoutineGenerator.SET_OPTIONS.forEach { option ->
+                        FilterChip(
+                            selected = sets == option,
+                            onClick = { sets = option },
+                            label = { Text("$option") },
+                        )
+                    }
+                }
+                Text(
+                    if (sets != null && sets != currentSets) {
+                        "Se aplica a todos los ejercicios de la rutina; luego puedes " +
+                            "ajustar los que quieras uno a uno."
+                    } else if (currentSets == null) {
+                        "Aún no hay ejercicios a los que ponérselas."
+                    } else {
+                        "Elige otra cifra para cambiárselas a todos los ejercicios."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(name.trim(), goal, sets.takeIf { it != currentSets }) },
+                enabled = name.isNotBlank(),
+            ) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+/**
+ * Cambia un ejercicio por otro del mismo grupo muscular, conservando series,
+ * descanso y posición. Lo de arriba se parece más a lo que había.
+ */
+@Composable
+private fun SwapExerciseDialog(
+    exercise: RoutineExerciseItem,
+    alternatives: List<ExerciseAlternative>,
+    loading: Boolean,
+    onDismiss: () -> Unit,
+    onPick: (ExerciseAlternative) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cambiar ${exercise.exerciseName}") },
+        text = {
+            if (loading && alternatives.isEmpty()) {
+                // Sin esto el diálogo decía "no encuentro alternativas" durante el
+                // instante en que aún se estaban buscando.
+                Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (alternatives.isEmpty()) {
+                Text(
+                    "No encuentro otros ejercicios del mismo grupo muscular que no estén ya " +
+                        "en la rutina.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                LazyColumn(Modifier.height(340.dp)) {
+                    items(alternatives.size) { index ->
+                        val alternative = alternatives[index]
+                        Card(
+                            onClick = { onPick(alternative) },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(alternative.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    buildString {
+                                        append(alternative.styleLabel)
+                                        append(if (alternative.isCompound) " · compuesto" else " · aislamiento")
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 /**
@@ -369,9 +605,17 @@ private fun DayCard(
     onEditExercise: (RoutineExerciseItem) -> Unit,
     onOpenExercise: (RoutineExerciseItem) -> Unit,
     onRemoveExercise: (RoutineExerciseItem) -> Unit,
-    onMoveExercise: (RoutineExerciseItem, Int) -> Unit,
+    onSwapExercise: (RoutineExerciseItem) -> Unit,
+    onReorder: (List<Long>) -> Unit,
     onStartWorkout: () -> Unit,
 ) {
+    // Reordenado por arrastre: el orden vive local mientras se arrastra y se
+    // escribe de una vez al soltar, para no disparar recargas a mitad de gesto.
+    var localOrder by remember(day.exercises) { mutableStateOf(day.exercises) }
+    var draggingId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    val rowHeights = remember { mutableStateMapOf<Long, Int>() }
+
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -402,9 +646,16 @@ private fun DayCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                day.exercises.forEachIndexed { index, exercise ->
+                localOrder.forEach { exercise ->
+                    key(exercise.id) {
                     Row(
-                        Modifier.fillMaxWidth(),
+                        Modifier
+                            .fillMaxWidth()
+                            .zIndex(if (exercise.id == draggingId) 1f else 0f)
+                            .graphicsLayer {
+                                translationY = if (exercise.id == draggingId) dragOffset else 0f
+                            }
+                            .onSizeChanged { rowHeights[exercise.id] = it.height },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // Toda la fila abre la ficha del ejercicio; las acciones van aparte.
@@ -442,29 +693,59 @@ private fun DayCard(
                             }
                         }
 
-                        Column {
-                            IconButton(
-                                onClick = { onMoveExercise(exercise, -1) },
-                                enabled = index > 0,
-                                modifier = Modifier.size(28.dp),
-                            ) {
-                                Icon(
-                                    Icons.Filled.KeyboardArrowUp,
-                                    contentDescription = "Subir",
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                            IconButton(
-                                onClick = { onMoveExercise(exercise, 1) },
-                                enabled = index < day.exercises.lastIndex,
-                                modifier = Modifier.size(28.dp),
-                            ) {
-                                Icon(
-                                    Icons.Filled.KeyboardArrowDown,
-                                    contentDescription = "Bajar",
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
+                        // Mantener pulsado y arrastrar sustituye a las flechas
+                        // toque-a-toque; el orden se guarda al soltar.
+                        Icon(
+                            Icons.Filled.DragHandle,
+                            contentDescription =
+                                "Mantén pulsado y arrastra para mover ${exercise.exerciseName}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .padding(6.dp)
+                                .pointerInput(exercise.id) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            draggingId = exercise.id
+                                            dragOffset = 0f
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragOffset += amount.y
+                                            val height = rowHeights[exercise.id] ?: return@detectDragGesturesAfterLongPress
+                                            val threshold = height * 0.66f
+                                            var index = localOrder.indexOfFirst { it.id == exercise.id }
+                                            while (dragOffset > threshold && index < localOrder.lastIndex) {
+                                                localOrder = localOrder.toMutableList()
+                                                    .apply { add(index + 1, removeAt(index)) }
+                                                dragOffset -= height
+                                                index++
+                                            }
+                                            while (dragOffset < -threshold && index > 0) {
+                                                localOrder = localOrder.toMutableList()
+                                                    .apply { add(index - 1, removeAt(index)) }
+                                                dragOffset += height
+                                                index--
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            draggingId = null
+                                            dragOffset = 0f
+                                            onReorder(localOrder.map { it.id })
+                                        },
+                                        onDragCancel = {
+                                            draggingId = null
+                                            dragOffset = 0f
+                                            localOrder = day.exercises
+                                        },
+                                    )
+                                },
+                        )
+                        IconButton(onClick = { onSwapExercise(exercise) }) {
+                            Icon(
+                                Icons.Filled.SwapHoriz,
+                                contentDescription = "Cambiar ${exercise.exerciseName} por otro",
+                            )
                         }
                         IconButton(onClick = { onEditExercise(exercise) }) {
                             Icon(Icons.Filled.Edit, contentDescription = "Editar series")
@@ -472,6 +753,7 @@ private fun DayCard(
                         IconButton(onClick = { onRemoveExercise(exercise) }) {
                             Icon(Icons.Filled.Close, contentDescription = "Quitar")
                         }
+                    }
                     }
                 }
             }
@@ -608,16 +890,24 @@ private fun EditExerciseDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                onSave(
-                    sets.toIntOrNull() ?: exercise.targetSets,
-                    repsMin.toIntOrNull(),
-                    repsMax.toIntOrNull(),
-                    timeSeconds.toIntOrNull(),
-                    weight.toDoubleOrNull(),
-                    rest.toIntOrNull() ?: exercise.restSeconds,
-                )
-            }) { Text("Guardar") }
+            // Deshabilitado en vez de guardar en silencio el valor anterior: las
+            // series vacías o un peso tipo "1.2.3" se ven, no se corrigen a escondidas.
+            val setsValid = sets.toIntOrNull()?.let { it > 0 } == true
+            val restValid = rest.toIntOrNull() != null
+            val weightValid = weight.isBlank() || weight.toDoubleOrNull() != null
+            TextButton(
+                enabled = setsValid && restValid && weightValid,
+                onClick = {
+                    onSave(
+                        sets.toIntOrNull() ?: exercise.targetSets,
+                        repsMin.toIntOrNull(),
+                        repsMax.toIntOrNull(),
+                        timeSeconds.toIntOrNull(),
+                        weight.toDoubleOrNull(),
+                        rest.toIntOrNull() ?: exercise.restSeconds,
+                    )
+                },
+            ) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )

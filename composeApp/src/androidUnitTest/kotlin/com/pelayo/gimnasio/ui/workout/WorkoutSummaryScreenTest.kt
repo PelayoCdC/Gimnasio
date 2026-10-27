@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import com.pelayo.gimnasio.data.createTestDatabase
@@ -119,9 +120,12 @@ class WorkoutSummaryScreenTest {
 
         scrollTo("Serie 1")
         compose.onNodeWithText("Serie 1: 100 kg × 10").performClick()
-        compose.onNodeWithText("Borrar esta serie").performClick()
+        // El diálogo creció con el campo de RPE: el botón hay que traerlo a la vista.
+        compose.onNodeWithText("Borrar esta serie").performScrollTo().performClick()
 
+        // Borra al momento; la red de seguridad es el "Deshacer" del snackbar.
         assertEquals(0, runBlocking { workouts.summary(sessionId)!!.totalSets })
+        compose.onNodeWithText("Deshacer").assertExists()
     }
 
     @Test

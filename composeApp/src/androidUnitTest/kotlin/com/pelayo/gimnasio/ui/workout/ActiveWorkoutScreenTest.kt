@@ -3,8 +3,10 @@ package com.pelayo.gimnasio.ui.workout
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -106,6 +108,44 @@ class ActiveWorkoutScreenTest {
     }
 
     @Test
+    fun un_ejercicio_de_tiempo_pide_segundos_y_ofrece_cronometro() {
+        // La plancha se aguanta, no se repite: ni kilos ni reps.
+        val plankId = db.insertTestExercise(2, "Plancha de antebrazo", listOf(6L))
+        val sessionId = runBlocking {
+            val routineId = routines.createRoutine("Core", null, RoutineGoal.HIPERTROFIA)
+            val coreDay = routines.addDay(routineId, "Core", null)
+            routines.addExerciseToDay(coreDay, plankId, RoutineGoal.HIPERTROFIA)
+            workouts.startSession(coreDay, LocalDate(2026, 7, 25))
+        }
+
+        showScreen(sessionId)
+
+        compose.onNodeWithText("Segundos").assertExists()
+        compose.onNodeWithContentDescription("Cronometrar la serie").assertExists()
+        compose.onAllNodesWithText("kg").assertCountEquals(0)
+        compose.onAllNodesWithText("Reps").assertCountEquals(0)
+    }
+
+    @Test
+    fun un_ejercicio_de_peso_corporal_no_pide_kilos_pero_deja_ponerlos() {
+        val crunchId = db.insertTestExercise(3, "Crunch abdominal", listOf(6L))
+        val sessionId = runBlocking {
+            val routineId = routines.createRoutine("Abdomen", null, RoutineGoal.HIPERTROFIA)
+            val coreDay = routines.addDay(routineId, "Abdomen", null)
+            routines.addExerciseToDay(coreDay, crunchId, RoutineGoal.HIPERTROFIA)
+            workouts.startSession(coreDay, LocalDate(2026, 7, 25))
+        }
+
+        showScreen(sessionId)
+
+        compose.onNodeWithText("Reps").assertExists()
+        compose.onAllNodesWithText("kg").assertCountEquals(0)
+
+        compose.onNodeWithText("Añadir peso").performClick()
+        compose.onNodeWithText("kg").assertExists()
+    }
+
+    @Test
     fun registrar_una_serie_la_lista_y_avanza_el_contador() {
         showScreen(startSession())
 
@@ -119,11 +159,60 @@ class ActiveWorkoutScreenTest {
     }
 
     @Test
+    fun la_siguiente_serie_hereda_el_peso_y_las_reps_de_la_recien_apuntada() {
+        showScreen(startSession())
+
+        compose.onNodeWithText("kg").performTextReplacement("62.5")
+        compose.onNodeWithText("Reps").performTextReplacement("10")
+        compose.onNodeWithContentDescription("Registrar serie").performClick()
+
+        // Los campos quedan listos para repetir la serie sin teclear nada.
+        compose.onNode(hasText("62.5") and hasSetTextAction()).assertExists()
+        compose.onNode(hasText("10") and hasSetTextAction()).assertExists()
+    }
+
+    @Test
+    fun sin_series_hoy_el_prerrelleno_sale_de_la_sesion_anterior() {
+        runBlocking {
+            val previous = workouts.startSession(dayId, LocalDate(2026, 7, 18))
+            workouts.logSet(previous, benchId, 1, 57.5, 11, null)
+            workouts.completeSession(previous, 45, null, null)
+        }
+
+        showScreen(startSession())
+
+        compose.onNode(hasText("57.5") and hasSetTextAction()).assertExists()
+        compose.onNode(hasText("11") and hasSetTextAction()).assertExists()
+    }
+
+    @Test
     fun el_boton_de_registrar_esta_apagado_sin_repeticiones() {
         showScreen(startSession())
 
         compose.onNodeWithText("Reps").performTextReplacement("")
         compose.onNodeWithContentDescription("Registrar serie").assertIsNotEnabled()
+    }
+
+    @Test
+    fun repetir_un_dia_enseña_lo_que_se_hizo_la_vez_anterior() {
+        // Antes solo salía un resumen y desaparecía al apuntar la primera serie.
+        runBlocking {
+            val previous = workouts.startSession(dayId, LocalDate(2026, 7, 18))
+            workouts.logSet(previous, benchId, 1, 60.0, 12, null)
+            workouts.logSet(previous, benchId, 2, 60.0, 10, null)
+            workouts.completeSession(previous, 45, null, null)
+        }
+
+        showScreen(startSession())
+
+        compose.onNode(hasText("Última vez", substring = true)).assertExists()
+        compose.onNodeWithText("Serie 1: 60 kg × 12").assertExists()
+        compose.onNodeWithText("Serie 2: 60 kg × 10").assertExists()
+
+        // Y sigue estando después de registrar una serie.
+        compose.onNodeWithText("Reps").performTextReplacement("12")
+        compose.onNodeWithContentDescription("Registrar serie").performClick()
+        compose.onNodeWithText("Serie 2: 60 kg × 10").assertExists()
     }
 
     @Test
