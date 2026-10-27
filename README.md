@@ -8,6 +8,12 @@ lo que gastas.
 base de datos es un fichero SQLite local y funciona sin conexión salvo cuando se
 busca un ejercicio o un alimento nuevo.
 
+## Capturas
+
+| Inicio | Equilibrio muscular | Catálogo | Perfil |
+|---|---|---|---|
+| ![Inicio con el entreno que toca hoy y el balance de calorías](docs/capturas/inicio.jpg) | ![Series efectivas por grupo muscular de una rutina generada](docs/capturas/equilibrio-muscular.jpg) | ![Búsqueda "press inclinado" en el catálogo de ejercicios](docs/capturas/catalogo.jpg) | ![Perfil con IMC, grasa corporal y gasto calórico](docs/capturas/perfil.jpg) |
+
 ## Qué hace
 
 **Entrenamiento**
